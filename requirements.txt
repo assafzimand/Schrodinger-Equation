@@ -46,6 +46,7 @@
 numpy==2.2.6
 scipy==1.15.3           # Latin Hypercube Sampling, interpolation
 matplotlib==3.10.7      # Plotting and visualization
+seaborn==0.13.2         # Statistical plotting and styling
 
 # ============================================================================
 # CONFIGURATION & UTILITIES
