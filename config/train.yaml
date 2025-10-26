@@ -1,0 +1,30 @@
+# Training Configuration
+# Deep Learning Approximation of the Schrödinger Equation
+
+train:
+  # Training hyperparameters
+  epochs: 10000
+  learning_rate: 0.001
+  batch_size: 1024
+  
+  # Hardware settings
+  device: auto  # Options: 'auto', 'cuda', 'cpu'
+  
+  # Model architecture
+  hidden_layers: 5
+  hidden_neurons: 100
+  activation: tanh  # Activation function for hidden layers
+  
+  # Optimizer settings
+  optimizer: adam
+  scheduler: null  # Optional: 'step', 'exponential', 'cosine', etc.
+  
+  # Reproducibility
+  seed: 42
+  dtype: float32  # Options: 'float32', 'float64'
+  deterministic: false  # Use deterministic CuDNN (slower but reproducible)
+  
+  # Experiment tracking
+  mlflow_experiment: schrodinger_step1
+  checkpoint_dir: outputs/checkpoints
+

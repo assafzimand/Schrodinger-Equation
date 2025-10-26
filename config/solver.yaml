@@ -1,0 +1,19 @@
+# Solver Configuration
+# NLSE solver parameters for ground-truth generation
+
+solver:
+  # Spatial domain
+  x_min: -5.0
+  x_max: 5.0
+  
+  # Temporal domain
+  t_min: 0.0
+  t_max: 1.5708  # π/2 ≈ 1.5708
+  
+  # Grid resolution
+  nx: 256  # Number of spatial grid points
+  nt: 100  # Number of temporal grid points
+  
+  # Physical parameters
+  alpha: 1.0  # Nonlinearity coefficient (1.0 for standard focusing NLSE)
+

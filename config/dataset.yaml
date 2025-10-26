@@ -1,0 +1,18 @@
+# Dataset Configuration
+# Parameters for generating training data
+
+dataset:
+  # Sample counts (as per paper)
+  n_collocation: 20000  # N_f: collocation points for PDE residual
+  n_initial: 50         # N_0: points for initial condition
+  n_boundary: 50        # N_b: points for boundary conditions
+  
+  # Sampling strategy
+  sampling_method: lhs  # Latin Hypercube Sampling
+  
+  # Reproducibility
+  seed: 42
+  
+  # Output
+  save_path: data/processed/dataset.npz
+

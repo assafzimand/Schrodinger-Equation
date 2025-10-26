@@ -3,3 +3,7 @@ venv/
 ENV/
 .env/
 .venv/
+
+# cursor   
+cursor/
+.cursor/
