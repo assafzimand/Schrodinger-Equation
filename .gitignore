@@ -1,9 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
 # Virtual environments
 venv/
 ENV/
 .env/
 .venv/
+env/
 
-# cursor   
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# MLflow experiments (regenerate with code)
+mlruns/
+
+# Model checkpoints (large binaries)
+outputs/checkpoints/*.pt
+!outputs/checkpoints/final_model.pt
+
+# Data files (large, regenerate with code)
+data/processed/*.npz
+data/raw/*
+
+# Plots (can regenerate)
+outputs/plots/*.png
+outputs/plots/*.pdf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cursor
 cursor/
 .cursor/

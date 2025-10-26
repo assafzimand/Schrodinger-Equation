@@ -1,0 +1,86 @@
+# ============================================================================
+# Deep Learning Approximation of the Schrödinger Equation - Requirements
+# ============================================================================
+#
+# Python version: 3.10+
+# Platform: Windows (CUDA support), Linux, macOS
+#
+# INSTALLATION INSTRUCTIONS:
+# -------------------------
+# 1. Create virtual environment:
+#    python -m venv venv
+#    .\venv\Scripts\activate  (Windows)
+#    source venv/bin/activate  (Linux/macOS)
+#
+# 2. Install PyTorch with CUDA support (see PYTORCH section below)
+#
+# 3. Install remaining packages:
+#    pip install -r requirements.txt
+#
+# ============================================================================
+
+# ============================================================================
+# PYTORCH WITH CUDA SUPPORT
+# ============================================================================
+# NOTE: These specific versions include CUDA 12.1 support
+# For CUDA 12.x (12.1, 12.2, 12.3, 12.4, 12.5):
+#   pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+#
+# For CUDA 11.8:
+#   pip install torch==2.5.1+cu118 torchvision==0.20.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+#
+# For CPU-only (no GPU):
+#   pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+#
+# Verify installation:
+#   python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+# ============================================================================
+
+# PyTorch (installed separately with CUDA, see above)
+# torch==2.5.1+cu121
+# torchvision==0.20.1+cu121
+
+# ============================================================================
+# CORE SCIENTIFIC COMPUTING
+# ============================================================================
+numpy==2.2.6
+scipy==1.15.3           # Latin Hypercube Sampling, interpolation
+matplotlib==3.10.7      # Plotting and visualization
+
+# ============================================================================
+# CONFIGURATION & UTILITIES
+# ============================================================================
+PyYAML==6.0.3          # Configuration file parsing
+
+# ============================================================================
+# EXPERIMENT TRACKING
+# ============================================================================
+mlflow==3.5.1          # Experiment tracking and model registry
+
+# ============================================================================
+# PYTORCH DEPENDENCIES (installed automatically with torch)
+# ============================================================================
+sympy==1.13.1          # Symbolic mathematics (PyTorch dependency)
+Jinja2==3.1.6          # Template engine (MLflow dependency)
+pillow==12.0.0         # Image processing (torchvision dependency)
+
+# ============================================================================
+# DEVELOPMENT TOOLS (Optional)
+# ============================================================================
+black==25.9.0          # Code formatter (optional, for development)
+
+# ============================================================================
+# ADDITIONAL NOTES
+# ============================================================================
+# - This project uses PyTorch 2.5.1 with CUDA 12.1 support
+# - Tested on NVIDIA GeForce MX230 (Compute Capability 6.1)
+# - Compatible with CUDA versions: 12.1, 12.2, 12.3, 12.4, 12.5
+# - For different CUDA versions, adjust the torch installation command
+# - GPU acceleration significantly speeds up training (2-10x faster)
+#
+# SYSTEM REQUIREMENTS:
+# - RAM: 8GB+ recommended
+# - GPU: NVIDIA GPU with CUDA support (optional but recommended)
+# - Disk: ~2GB for environment + data
+# ============================================================================
+
