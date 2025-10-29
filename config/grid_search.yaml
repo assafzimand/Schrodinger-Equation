@@ -6,25 +6,25 @@ grid_search:
   base_config: config/train.yaml
   
   # Number of epochs for each run
-  epochs: 1000
+  epochs: 500
   
   # Grid parameters to search
   parameters:
     # Initial condition loss weight
     # Based on analysis: 1.0 (paper), 10, 20 (moderate boost)
-    weight_initial: [400]
+    weight_initial: [1,5]
     
     # Boundary condition weight (keep constant)
     weight_boundary: [1]
     
     # PDE residual weight (try boosting to improve time evolution)
-    weight_residual: [400]
+    weight_residual: [1,5]
     
     # Batch size (affects gradient noise and convergence)
     batch_size: [1024, 512]
     
     # Learning rate (typical range for Adam: 1e-4 to 1e-2)
-    learning_rate: [0.0001, 0.00001, 0.000001]
+    learning_rate: [0.001, 0.0001, 0.00001, 0.000001]
   
   # MLflow experiment name for grid search
   experiment_name: schrodinger_grid_search
