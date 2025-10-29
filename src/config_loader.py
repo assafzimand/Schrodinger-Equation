@@ -49,6 +49,8 @@ class DatasetConfig:
         sampling_method: Sampling method ('lhs' for Latin Hypercube)
         seed: Random seed for reproducibility
         save_path: Path to save generated dataset
+        ic_sigma: Standard deviation for Gaussian-biased IC sampling (default: 1.2)
+        ic_mix: Fraction of Gaussian samples vs uniform (default: 0.7 = 70% Gaussian)
     """
     n_collocation: int = 20000
     n_initial: int = 50
@@ -56,6 +58,8 @@ class DatasetConfig:
     sampling_method: str = "lhs"
     seed: int = 42
     save_path: str = "data/processed/dataset.npz"
+    ic_sigma: float = 1.2
+    ic_mix: float = 0.7
 
 
 @dataclass

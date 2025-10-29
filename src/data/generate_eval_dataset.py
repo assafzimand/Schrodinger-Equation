@@ -73,11 +73,26 @@ def generate_eval_dataset(
         u_bounds=[config.solver.t_max],
     ).flatten()
 
-    # Generate initial condition points (t=0)
+    # Generate initial condition points (t=0) with Gaussian bias
+    # IC samples are drawn from a Gaussian near x=0 to emphasize the region
+    # where |h(x,0)| is large. This improves phase anchoring at t=0.
     print("Generating initial condition points...")
-    x_0 = np.linspace(
-        config.solver.x_min, config.solver.x_max, n_initial, endpoint=False
-    )
+    print(f"  Gaussian bias: σ={config.dataset.ic_sigma}, mix={config.dataset.ic_mix*100:.0f}% Gaussian")
+    
+    rng = np.random.RandomState(config.dataset.seed + 1)
+    n_gaussian = int(n_initial * config.dataset.ic_mix)
+    n_uniform = n_initial - n_gaussian
+    
+    # Gaussian samples centered at x=0
+    x_gaussian = rng.normal(loc=0.0, scale=config.dataset.ic_sigma, size=n_gaussian)
+    x_gaussian = np.clip(x_gaussian, config.solver.x_min, config.solver.x_max)
+    
+    # Uniform samples across full domain
+    x_uniform = rng.uniform(config.solver.x_min, config.solver.x_max, size=n_uniform)
+    
+    # Combine and shuffle
+    x_0 = np.concatenate([x_gaussian, x_uniform])
+    rng.shuffle(x_0)
     t_0 = np.zeros(n_initial)
 
     # Generate boundary condition points (x = x_min and x = x_max)

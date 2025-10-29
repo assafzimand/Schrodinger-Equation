@@ -62,14 +62,25 @@ def sample_initial_condition(
     x_range: Tuple[float, float],
     t_value: float = 0.0,
     seed: int = 42,
+    ic_sigma: float = 1.2,
+    ic_mix: float = 0.7,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Sample points on the initial condition boundary (t=0).
+    """Sample points on the initial condition boundary (t=0) with Gaussian bias.
+    
+    IC samples are drawn from a mixed distribution:
+    - (ic_mix * 100)% from a Gaussian centered at x=0 with std=ic_sigma
+    - ((1-ic_mix) * 100)% uniformly from [x_min, x_max]
+    
+    This biases samples toward the center where |h(x,0)| = |2*sech(x)| is large,
+    improving phase anchoring at t=0 while still covering the domain tails.
 
     Args:
         n_samples: Number of samples
         x_range: (x_min, x_max) tuple
         t_value: Time value (default 0.0)
         seed: Random seed
+        ic_sigma: Standard deviation for Gaussian distribution (default 1.2)
+        ic_mix: Fraction of Gaussian samples vs uniform (default 0.7 = 70% Gaussian)
 
     Returns:
         Tuple of (x_samples, t_samples) arrays
@@ -77,7 +88,22 @@ def sample_initial_condition(
     rng = np.random.RandomState(seed)
     x_min, x_max = x_range
 
-    x_samples = rng.uniform(x_min, x_max, size=n_samples)
+    # Split samples between Gaussian and uniform
+    n_gaussian = int(n_samples * ic_mix)
+    n_uniform = n_samples - n_gaussian
+    
+    # Gaussian samples centered at x=0
+    x_gaussian = rng.normal(loc=0.0, scale=ic_sigma, size=n_gaussian)
+    # Clip to domain
+    x_gaussian = np.clip(x_gaussian, x_min, x_max)
+    
+    # Uniform samples across the full domain
+    x_uniform = rng.uniform(x_min, x_max, size=n_uniform)
+    
+    # Combine and shuffle
+    x_samples = np.concatenate([x_gaussian, x_uniform])
+    rng.shuffle(x_samples)
+    
     t_samples = np.full(n_samples, t_value)
 
     return x_samples, t_samples
@@ -251,12 +277,15 @@ def generate_dataset(
     # 3. Generate initial condition samples
     if verbose:
         print(f"\n3. Sampling initial condition (N_0={dataset_cfg.n_initial}):")
+        print(f"   Gaussian bias: σ={dataset_cfg.ic_sigma}, mix={dataset_cfg.ic_mix*100:.0f}% Gaussian")
 
     x_0, t_0 = sample_initial_condition(
         n_samples=dataset_cfg.n_initial,
         x_range=(solver_cfg.x_min, solver_cfg.x_max),
         t_value=solver_cfg.t_min,
         seed=dataset_cfg.seed + 1,
+        ic_sigma=dataset_cfg.ic_sigma,
+        ic_mix=dataset_cfg.ic_mix,
     )
 
     if verbose:

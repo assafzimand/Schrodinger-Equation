@@ -4,7 +4,7 @@
 train:
   # Training hyperparameters
   epochs: 1000
-  learning_rate: 0.001
+  learning_rate: 0.01
   batch_size: 512
   
   # Hardware settings
