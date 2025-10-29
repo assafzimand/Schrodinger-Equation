@@ -36,7 +36,9 @@ def load_checkpoint(checkpoint_path: Path, device: str = "cuda") -> Tuple[Schrod
     Returns:
         Tuple of (model, config)
     """
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    # Use weights_only=False since we trust our own checkpoints
+    # (PyTorch 2.6+ defaults to True for security)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     config = checkpoint["config"]
 
