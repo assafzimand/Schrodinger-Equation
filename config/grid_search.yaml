@@ -6,7 +6,7 @@ grid_search:
   base_config: config/train.yaml
   
   # Number of epochs for each run
-  epochs: 10
+  epochs: 1000
   
   # Grid parameters to search
   parameters:
@@ -21,7 +21,7 @@ grid_search:
     weight_residual: [400]
     
     # Batch size (affects gradient noise and convergence)
-    batch_size: [1024]
+    batch_size: [512]
   
   # MLflow experiment name for grid search
   experiment_name: schrodinger_grid_search
