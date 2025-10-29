@@ -16,6 +16,8 @@ import numpy as np
 import seaborn as sns
 from matplotlib.colors import Normalize
 
+from src.utils.metrics import phase_aligned_rel_l2_numpy
+
 
 # Set style
 sns.set_style("whitegrid")
@@ -153,6 +155,7 @@ def plot_comparison(
 
     magnitude_model = np.abs(h_model)
     magnitude_solver = np.abs(h_solver)
+    # This error is now phase-invariant because h_model is pre-aligned
     error = np.abs(h_model - h_solver)
 
     # Global min/max for consistent colormaps
@@ -180,7 +183,7 @@ def plot_comparison(
     )
     ax3.set_xlabel("x")
     ax3.set_ylabel("t")
-    ax3.set_title("Absolute Error |h_model - h_solver|")
+    ax3.set_title("Absolute Error (Phase-Invariant)")
     plt.colorbar(im, ax=ax3, label="Error")
 
     # Row 2: Time slices comparison
@@ -216,7 +219,7 @@ def plot_comparison(
     ax7.plot(t_grid, error_vs_time, "g-", linewidth=2)
     ax7.set_xlabel("t")
     ax7.set_ylabel("Mean |Error|")
-    ax7.set_title("Error vs Time")
+    ax7.set_title("Error vs Time (Phase-Invariant)")
     ax7.grid(True, alpha=0.3)
 
     ax8 = plt.subplot(3, 3, 8)
@@ -224,20 +227,20 @@ def plot_comparison(
     ax8.plot(x_grid, error_vs_space, "m-", linewidth=2)
     ax8.set_xlabel("x")
     ax8.set_ylabel("Mean |Error|")
-    ax8.set_title("Error vs Space")
+    ax8.set_title("Error vs Space (Phase-Invariant)")
     ax8.grid(True, alpha=0.3)
 
     ax9 = plt.subplot(3, 3, 9)
     relative_errors = []
     for i in range(len(t_grid)):
-        diff_norm = np.sqrt(np.sum(np.abs(h_model[i, :] - h_solver[i, :]) ** 2))
-        true_norm = np.sqrt(np.sum(np.abs(h_solver[i, :]) ** 2))
-        relative_errors.append((diff_norm / true_norm).item())
+        # Ensure phase alignment for each time slice individually for accuracy
+        rel_err = phase_aligned_rel_l2_numpy(h_model[i, :], h_solver[i, :])
+        relative_errors.append(rel_err)
 
     ax9.plot(t_grid, relative_errors, "c-", linewidth=2)
     ax9.set_xlabel("t")
     ax9.set_ylabel("Relative L² Error")
-    ax9.set_title("Relative Error vs Time")
+    ax9.set_title("Relative L² Error vs Time (Phase-Invariant)")
     ax9.grid(True, alpha=0.3)
 
     plt.tight_layout()

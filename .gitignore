@@ -37,7 +37,6 @@ outputs/checkpoints/*.pt
 !outputs/checkpoints/final_model.pt
 
 # Data files (large, regenerate with code)
-data/processed/*.npz
 data/raw/*
 
 # Plots (can regenerate)

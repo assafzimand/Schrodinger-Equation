@@ -5,6 +5,7 @@ from the split-step Fourier solver across the full domain.
 """
 
 import sys
+import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -18,9 +19,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.config_loader import Config
 from src.model.schrodinger_model import SchrodingerNet
 from src.solver.nlse_solver import solve_nlse_full_grid
+from src.utils.metrics import phase_aligned_rel_l2_numpy
 from src.utils.plotting import (
     plot_comparison,
-    plot_loss_curves,
     plot_phase_comparison,
 )
 
@@ -100,8 +101,8 @@ def compute_metrics(
     h_true: np.ndarray,
     x_grid: np.ndarray,
     t_grid: np.ndarray,
-) -> Dict[str, float]:
-    """Compute various error metrics.
+) -> Dict[str, any]:
+    """Compute various error metrics, including phase-aligned errors.
 
     Args:
         h_pred: Model predictions (nt, nx)
@@ -110,19 +111,24 @@ def compute_metrics(
         t_grid: Temporal grid
 
     Returns:
-        Dictionary of metrics
+        Dictionary of metrics, including the phase-aligned prediction.
     """
-    # Compute errors
-    error = h_pred - h_true
+    # Find optimal phase to align h_pred with h_true
+    inner_product = np.vdot(h_true.flatten(), h_pred.flatten())
+    optimal_phase = np.angle(inner_product)
+    h_pred_aligned = h_pred * np.exp(-1j * optimal_phase)
+
+    # Compute errors using the aligned prediction
+    error = h_pred_aligned - h_true
     abs_error = np.abs(error)
 
     # L2 norms
-    pred_norm = np.sqrt(np.sum(np.abs(h_pred) ** 2))
+    pred_norm = np.sqrt(np.sum(np.abs(h_pred_aligned) ** 2))
     true_norm = np.sqrt(np.sum(np.abs(h_true) ** 2))
     error_norm = np.sqrt(np.sum(abs_error ** 2))
 
-    # Relative L2 error
-    relative_l2 = error_norm / true_norm
+    # Relative L2 error (phase-invariant)
+    relative_l2 = phase_aligned_rel_l2_numpy(h_pred, h_true)
 
     # Pointwise metrics
     max_abs_error = abs_error.max()
@@ -149,6 +155,8 @@ def compute_metrics(
         "max_error_time": float(max_error_time),
         "pred_norm": float(pred_norm),
         "true_norm": float(true_norm),
+        "optimal_phase_rad": float(optimal_phase),
+        "h_pred_aligned": h_pred_aligned,
     }
 
 
@@ -186,7 +194,9 @@ def evaluate_model(
     # Load model
     if verbose:
         print("\n1. Loading model...")
+    t0 = time.time()
     model, config = load_checkpoint(checkpoint_path, device)
+    t1 = time.time()
     if verbose:
         print(f"   ✓ Model loaded ({model.count_parameters():,} parameters)")
 
@@ -194,6 +204,7 @@ def evaluate_model(
     if verbose:
         print("\n2. Computing ground truth solution...")
 
+    t2 = time.time()
     x_grid, t_grid, h_true = solve_nlse_full_grid(
         x_min=config.solver.x_min,
         x_max=config.solver.x_max,
@@ -203,6 +214,7 @@ def evaluate_model(
         nt=config.solver.nt,
         alpha=config.solver.alpha,
     )
+    t3 = time.time()
 
     if verbose:
         print(f"   ✓ Grid: {len(x_grid)} × {len(t_grid)} points")
@@ -211,19 +223,33 @@ def evaluate_model(
     if verbose:
         print("\n3. Generating model predictions...")
 
+    t4 = time.time()
     h_pred = predict_on_grid(model, x_grid, t_grid, device=device)
+    t5 = time.time()
 
     if verbose:
-        print(f"   ✓ Predictions generated")
+        print("   ✓ Predictions generated")
 
     # Compute metrics
     if verbose:
         print("\n4. Computing metrics...")
 
+    t6 = time.time()
     metrics = compute_metrics(h_pred, h_true, x_grid, t_grid)
+    h_pred_aligned = metrics.pop("h_pred_aligned")  # Extract aligned predictions
+    t7 = time.time()
+
+    # Attach timing breakdown
+    metrics.update({
+        "time_load_model": float(t1 - t0),
+        "time_solver": float(t3 - t2),
+        "time_predict_grid": float(t5 - t4),
+        "time_compute_metrics": float(t7 - t6),
+    })
 
     if verbose:
-        print("\n   Metrics:")
+        print("\n   Metrics (Phase-Invariant):")
+        print(f"   Optimal phase shift:   {metrics['optimal_phase_rad']:.4f} rad")
         print(f"   Relative L² error:     {metrics['relative_l2_error']:.6f}")
         print(f"   Max absolute error:    {metrics['max_abs_error']:.6f}")
         print(f"   Mean absolute error:   {metrics['mean_abs_error']:.6f}")
@@ -234,12 +260,13 @@ def evaluate_model(
     # Generate plots
     if verbose:
         print("\n5. Generating plots...")
+    t8 = time.time()
 
     # Main comparison plot
     fig1 = plot_comparison(
         x_grid,
         t_grid,
-        h_pred,
+        h_pred_aligned,  # Use aligned prediction
         h_true,
         save_path=output_dir / "model_vs_solver_comparison.png",
     )
@@ -250,7 +277,7 @@ def evaluate_model(
         fig2 = plot_phase_comparison(
             x_grid,
             t_grid,
-            h_pred,
+            h_pred_aligned,  # Use aligned prediction
             h_true,
             time_idx=idx,
             save_path=output_dir / f"phase_comparison_t{idx:03d}.png",
@@ -259,6 +286,8 @@ def evaluate_model(
 
     if verbose:
         print(f"   ✓ Plots saved to: {output_dir}")
+    t9 = time.time()
+    metrics["time/plots"] = float(t9 - t8)
 
     # Log to MLflow if active run
     try:
@@ -268,6 +297,11 @@ def evaluate_model(
                     "eval/relative_l2_error": metrics["relative_l2_error"],
                     "eval/max_abs_error": metrics["max_abs_error"],
                     "eval/mean_abs_error": metrics["mean_abs_error"],
+                    # Timings
+                    "eval_time_load_model": metrics.get("time_load_model", 0.0),
+                    "eval_time_solver": metrics.get("time_solver", 0.0),
+                    "eval_time_predict_grid": metrics.get("time_predict_grid", 0.0),
+                    "eval_time_compute_metrics": metrics.get("time_compute_metrics", 0.0),
                 }
             )
             mlflow.log_artifacts(str(output_dir))

@@ -1,0 +1,2 @@
+run,run_id,weight_initial,weight_boundary,weight_residual,batch_size,final_train_loss,final_val_loss,final_train_l2,final_val_l2,duration_minutes,timestamp
+1,2185a2f7540442519d1915f34edb4d3a,400,1,400,512,7.489034828543663,,0.3707922101020813,,511.5452694833333,2025-10-28T19:53:05.006031

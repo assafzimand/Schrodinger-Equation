@@ -1,0 +1,37 @@
+# Grid Search Configuration
+# Searches over loss weights and batch sizes to find optimal hyperparameters
+
+grid_search:
+  # Base configuration (will be overridden by grid parameters)
+  base_config: config/train.yaml
+  
+  # Number of epochs for each run
+  epochs: 20
+  
+  # Grid parameters to search
+  parameters:
+    # Initial condition loss weight
+    # Based on analysis: 1.0 (paper), 10, 20 (moderate boost)
+    weight_initial: [400]
+    
+    # Boundary condition weight (keep constant)
+    weight_boundary: [1]
+    
+    # PDE residual weight (try boosting to improve time evolution)
+    weight_residual: [400]
+    
+    # Batch size (affects gradient noise and convergence)
+    batch_size: [512]
+  
+  # MLflow experiment name for grid search
+  experiment_name: schrodinger_grid_search
+  
+  # Save results summary
+  results_file: outputs/grid_search_results.csv
+  
+  # Early stopping criteria (optional)
+  early_stopping:
+    enabled: false
+    patience: 100
+    min_delta: 0.001
+

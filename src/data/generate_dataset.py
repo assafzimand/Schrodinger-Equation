@@ -84,46 +84,44 @@ def sample_initial_condition(
 
 
 def sample_boundary_conditions(
-    n_samples: int,
+    n_times: int,
     x_boundaries: Tuple[float, float],
     t_range: Tuple[float, float],
     seed: int = 42,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Sample points on spatial boundaries (x = x_min and x = x_max).
+    """Sample paired boundary points at identical times for x = x_min and x = x_max.
 
     For periodic BC, we need h(x_min, t) = h(x_max, t) and
-    h_x(x_min, t) = h_x(x_max, t) for all t.
+    h_x(x_min, t) = h_x(x_max, t) for the same set of times t. This function
+    samples N_b time values and returns 2*N_b boundary samples: one at each
+    boundary for every sampled time.
 
     Args:
-        n_samples: Total number of samples (split between two boundaries)
+        n_times: Number of distinct time values (N_b)
         x_boundaries: (x_min, x_max) tuple
         t_range: (t_min, t_max) tuple
         seed: Random seed
 
     Returns:
-        Tuple of (x_samples, t_samples) arrays
+        Tuple of (x_samples, t_samples) arrays of length 2*n_times, ordered as
+        all left boundary points first, followed by all right boundary points,
+        with identical time ordering across both halves.
     """
     rng = np.random.RandomState(seed)
     x_min, x_max = x_boundaries
     t_min, t_max = t_range
 
-    # Split samples between left and right boundaries
-    n_left = n_samples // 2
-    n_right = n_samples - n_left
+    # Sample N_b time values uniformly
+    t_samples = rng.uniform(t_min, t_max, size=n_times)
 
-    # Sample times
-    t_left = rng.uniform(t_min, t_max, size=n_left)
-    t_right = rng.uniform(t_min, t_max, size=n_right)
+    # Build paired boundary coordinates with identical time ordering
+    x_left = np.full(n_times, x_min)
+    x_right = np.full(n_times, x_max)
 
-    # Create boundary samples
-    x_left = np.full(n_left, x_min)
-    x_right = np.full(n_right, x_max)
+    x_all = np.concatenate([x_left, x_right])
+    t_all = np.concatenate([t_samples, t_samples])
 
-    # Combine
-    x_samples = np.concatenate([x_left, x_right])
-    t_samples = np.concatenate([t_left, t_right])
-
-    return x_samples, t_samples
+    return x_all, t_all
 
 
 def solve_on_grid(
@@ -269,7 +267,7 @@ def generate_dataset(
         print(f"\n4. Sampling boundary conditions (N_b={dataset_cfg.n_boundary}):")
 
     x_b, t_b = sample_boundary_conditions(
-        n_samples=dataset_cfg.n_boundary,
+        n_times=dataset_cfg.n_boundary,
         x_boundaries=(solver_cfg.x_min, solver_cfg.x_max),
         t_range=(solver_cfg.t_min, solver_cfg.t_max),
         seed=dataset_cfg.seed + 2,
