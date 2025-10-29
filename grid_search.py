@@ -104,13 +104,17 @@ def run_grid_search():
         print(f"  weight_initial={params['weight_initial']}")
         print(f"  weight_residual={params['weight_residual']}")
         print(f"  batch_size={params['batch_size']}")
+        if 'learning_rate' in params:
+            print(f"  learning_rate={params['learning_rate']}")
         print(f"{'=' * 80}")
         
         run_start = datetime.now()
         
         try:
-            # Update batch size in temp config
+            # Update batch size and learning rate in temp config
             config_data['train']['batch_size'] = params['batch_size']
+            if 'learning_rate' in params:
+                config_data['train']['learning_rate'] = params['learning_rate']
             with open(temp_config_path, 'w') as f:
                 yaml.dump(config_data, f)
             
@@ -135,8 +139,9 @@ def run_grid_search():
                 run = runs[0]
                 run_id = run.info.run_id
                 metrics = run.data.metrics
+                mlflow_params = run.data.params
                 
-                results.append({
+                result_entry = {
                     'run': idx,
                     'run_id': run_id,
                     'weight_initial': params['weight_initial'],
@@ -149,7 +154,19 @@ def run_grid_search():
                     'final_val_l2': metrics.get('val/relative_l2_error'),
                     'duration_minutes': (datetime.now() - run_start).total_seconds() / 60,
                     'timestamp': run_start.isoformat(),
-                })
+                }
+                
+                # Add learning_rate if present in params
+                if 'learning_rate' in params:
+                    result_entry['learning_rate'] = params['learning_rate']
+                
+                # Add key MLflow parameters for reference (epochs, hidden layers, etc.)
+                result_entry['epochs'] = mlflow_params.get('epochs')
+                result_entry['hidden_layers'] = mlflow_params.get('hidden_layers')
+                result_entry['hidden_neurons'] = mlflow_params.get('hidden_neurons')
+                result_entry['activation'] = mlflow_params.get('activation')
+                
+                results.append(result_entry)
                 
                 print(f"\n✓ Run {idx} completed | Run ID: {run_id}")
                 if 'val/total_loss' in metrics:
@@ -206,7 +223,12 @@ def run_grid_search():
         print("-" * 80)
         top5 = results_df.dropna(subset=['final_val_loss']).nsmallest(5, 'final_val_loss')
         if len(top5) > 0:
-            print(top5[['run', 'weight_initial', 'weight_residual', 'batch_size', 'final_val_loss', 'final_val_l2']].to_string(index=False))
+            # Build column list dynamically to include learning_rate if present
+            display_cols = ['run', 'weight_initial', 'weight_residual', 'batch_size']
+            if 'learning_rate' in top5.columns:
+                display_cols.append('learning_rate')
+            display_cols.extend(['final_val_loss', 'final_val_l2'])
+            print(top5[display_cols].to_string(index=False))
         else:
             print("No successful runs with metrics.")
     

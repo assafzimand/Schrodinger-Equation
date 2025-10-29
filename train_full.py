@@ -9,6 +9,7 @@ This script trains the model on the ENTIRE dataset (no split) with:
 
 import sys
 from pathlib import Path
+from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -575,6 +576,34 @@ def train_full_model(
         print(f"Loss curves: {plots_dir}")
         print(f"Checkpoints: {Path(config.train.checkpoint_dir)}")
         
+        # Save run metadata to plots directory for easy reference
+        import json
+        metadata = {
+            "run_id": run_id,
+            "experiment": config.train.mlflow_experiment,
+            "timestamp": datetime.now().isoformat(),
+            "parameters": {
+                "epochs": config.train.epochs,
+                "learning_rate": config.train.learning_rate,
+                "batch_size": config.train.batch_size,
+                "hidden_layers": config.train.hidden_layers,
+                "hidden_neurons": config.train.hidden_neurons,
+                "activation": config.train.activation,
+                "weight_initial": weight_initial,
+                "weight_boundary": weight_boundary,
+                "weight_residual": weight_residual,
+                "seed": config.train.seed,
+            },
+            "final_metrics": {
+                "train_loss": train_metrics['total_loss'],
+                "train_l2_error": train_l2,
+                "eval_l2_error": history['eval/relative_l2_error'][-1] if eval_dataset is not None and len(history["eval/relative_l2_error"]) > 0 else None,
+            }
+        }
+        metadata_path = plots_dir / "run_info.json"
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
         # Run automatic evaluation on final model
         print("\n" + "=" * 70)
         print("Running Automatic Evaluation on Final Model")
@@ -597,6 +626,11 @@ def train_full_model(
                 output_dir=eval_output_dir,
                 device=device,
             )
+            
+            # Save run metadata to evaluation directory as well
+            eval_metadata_path = eval_output_dir / "run_info.json"
+            with open(eval_metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
             
             # Log evaluation artifacts to MLflow
             for file in eval_output_dir.glob("*.png"):

@@ -21,7 +21,10 @@ grid_search:
     weight_residual: [400]
     
     # Batch size (affects gradient noise and convergence)
-    batch_size: [512]
+    batch_size: [1024, 512]
+    
+    # Learning rate (typical range for Adam: 1e-4 to 1e-2)
+    learning_rate: [0.0001, 0.00001, 0.000001]
   
   # MLflow experiment name for grid search
   experiment_name: schrodinger_grid_search

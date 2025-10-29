@@ -4,8 +4,8 @@
 train:
   # Training hyperparameters
   epochs: 1000
-  learning_rate: 0.0001
-  batch_size: 512
+  learning_rate: 0.001
+  batch_size: 1024
   
   # Hardware settings
   device: auto  # Options: 'auto', 'cuda', 'cpu'
