@@ -81,6 +81,8 @@ class TrainConfig:
         deterministic: Whether to use deterministic CuDNN
         mlflow_experiment: Name for MLflow experiment
         checkpoint_dir: Directory to save model checkpoints
+        eval_subset_size: Number of points to use for L² eval (0 = use all)
+        checkpoint_ratio: Ratio of epochs for periodic checkpoints (0 = disable)
     """
     epochs: int = 10000
     learning_rate: float = 1e-3
@@ -96,6 +98,8 @@ class TrainConfig:
     deterministic: bool = False
     mlflow_experiment: str = "schrodinger_step1"
     checkpoint_dir: str = "outputs/checkpoints"
+    eval_subset_size: int = 2000
+    checkpoint_ratio: float = 0.0
 
 
 @dataclass

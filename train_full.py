@@ -71,7 +71,7 @@ def train_full_model(
     dataset_full = load_dataset(config.dataset.save_path)
     print(f"  Total collocation: {len(dataset_full['x_f'])}")
     print(f"  Initial: {len(dataset_full['x_0'])}")
-    print(f"  Boundary: {len(dataset_full['x_b'])}")
+    print(f"  Boundary: {len(dataset_full['x_b_left']) + len(dataset_full['x_b_right'])}")
     
     # Use entire dataset for training (no split)
     print("\nUsing ENTIRE dataset for training (no split)...")
@@ -84,7 +84,7 @@ def train_full_model(
         eval_dataset = load_dataset(eval_dataset_path)
         print(f"  Eval collocation: {len(eval_dataset['x_f'])}")
         print(f"  Eval initial: {len(eval_dataset['x_0'])}")
-        print(f"  Eval boundary: {len(eval_dataset['x_b'])}")
+        print(f"  Eval boundary: {len(eval_dataset['x_b_left']) + len(eval_dataset['x_b_right'])}")
     except FileNotFoundError:
         print(f"  ⚠ Evaluation dataset not found, using training data for eval")
         eval_dataset = None
@@ -124,14 +124,19 @@ def train_full_model(
         initial_dataset = TensorDataset(x_0, t_0, u_0, v_0)
         initial_loader = DataLoader(initial_dataset, batch_size=len(initial_dataset), shuffle=False)
         
-        x_b = torch.from_numpy(ds["x_b"]).float().unsqueeze(1).to(device)
-        t_b = torch.from_numpy(ds["t_b"]).float().unsqueeze(1).to(device)
-        boundary_dataset = TensorDataset(x_b, t_b)
-        boundary_loader = DataLoader(boundary_dataset, batch_size=len(boundary_dataset), shuffle=False)
+        x_b_left = torch.from_numpy(ds["x_b_left"]).float().unsqueeze(1).to(device)
+        t_b_left = torch.from_numpy(ds["t_b_left"]).float().unsqueeze(1).to(device)
+        boundary_left_dataset = TensorDataset(x_b_left, t_b_left)
+        boundary_left_loader = DataLoader(boundary_left_dataset, batch_size=len(boundary_left_dataset), shuffle=False)
         
-        return collocation_loader, initial_loader, boundary_loader
+        x_b_right = torch.from_numpy(ds["x_b_right"]).float().unsqueeze(1).to(device)
+        t_b_right = torch.from_numpy(ds["t_b_right"]).float().unsqueeze(1).to(device)
+        boundary_right_dataset = TensorDataset(x_b_right, t_b_right)
+        boundary_right_loader = DataLoader(boundary_right_dataset, batch_size=len(boundary_right_dataset), shuffle=False)
+        
+        return collocation_loader, initial_loader, boundary_left_loader, boundary_right_loader
     
-    train_coll_loader, train_init_loader, train_bound_loader = create_loaders(train_dataset, config.train.batch_size)
+    train_coll_loader, train_init_loader, train_bound_left_loader, train_bound_right_loader = create_loaders(train_dataset, config.train.batch_size)
     
     print(f"  Batch size: {config.train.batch_size}")
     print(f"  Train batches/epoch: {len(train_coll_loader)}")
@@ -172,7 +177,7 @@ def train_full_model(
         
         # Create eval loader if eval dataset available
         if eval_dataset is not None:
-            eval_coll_loader, _, _ = create_loaders(eval_dataset, config.train.batch_size)
+            eval_coll_loader, _, _, _ = create_loaders(eval_dataset, config.train.batch_size)
         
         print(f"\nTraining for {config.train.epochs} epochs...")
         print("-" * 70)
@@ -183,8 +188,8 @@ def train_full_model(
         evolution_checkpoints = []
         evolution_epochs = [1, 250, 500, 750, 1000] if config.train.epochs >= 1000 else [1, config.train.epochs // 4, config.train.epochs // 2, 3 * config.train.epochs // 4, config.train.epochs]
         
-        # Initialize AMP scaler
-        scaler = torch.cuda.amp.GradScaler(enabled=(device == "cuda"))
+        # Initialize AMP scaler (updated to torch.amp API)
+        scaler = torch.amp.GradScaler("cuda", enabled=(device == "cuda"))
         use_amp = (device == "cuda")
         
         # Evaluation cadence: every 20% of epochs + final
@@ -207,7 +212,8 @@ def train_full_model(
             
             t_fetch0 = time.time()
             x_0, t_0, u_0, v_0 = next(iter(train_init_loader))
-            x_b, t_b = next(iter(train_bound_loader))
+            x_b_left, t_b_left = next(iter(train_bound_left_loader))
+            x_b_right, t_b_right = next(iter(train_bound_right_loader))
             t_fetch1 = time.time()
             
             # Timing accumulators (per-batch averages)
@@ -225,11 +231,13 @@ def train_full_model(
             for x_f, t_f, u_f, v_f in train_coll_loader:
                 optimizer.zero_grad(set_to_none=True)
                 
-                # Forward pass with AMP
+                # Forward pass with AMP (updated to torch.amp API)
                 t_fwd0 = time.time()
-                with torch.cuda.amp.autocast(enabled=use_amp):
+                with torch.amp.autocast("cuda", enabled=use_amp):
                     total_loss, mse_0, mse_b, mse_f = loss_fn(
-                        model, x_0, t_0, u_0, v_0, x_b, t_b, x_f, t_f,
+                        model, x_0, t_0, u_0, v_0, 
+                        x_b_left, t_b_left, x_b_right, t_b_right,
+                        x_f, t_f,
                         return_components=True
                     )
                 t_fwd1 = time.time()
@@ -279,7 +287,7 @@ def train_full_model(
             }
             
             # Compute phase-invariant L2 error on training data (no grad)
-            def compute_l2(loader):
+            def compute_l2(loader, subset_size=0):
                 from src.utils.metrics import phase_aligned_rel_l2_torch
                 t_prep0 = time.time()
                 x, t, u, v = [], [], [], []
@@ -292,6 +300,15 @@ def train_full_model(
                 t = torch.cat(t)
                 u = torch.cat(u)
                 v = torch.cat(v)
+                
+                # Optionally subsample for faster evaluation
+                if subset_size > 0 and len(x) > subset_size:
+                    idx = torch.randperm(len(x), device=x.device)[:subset_size]
+                    x = x[idx]
+                    t = t[idx]
+                    u = u[idx]
+                    v = v[idx]
+                
                 t_prep1 = time.time()
                 model.eval()
                 with torch.no_grad():
@@ -304,7 +321,8 @@ def train_full_model(
                     rel = phase_aligned_rel_l2_torch(h_pred, h_true).item()
                 return rel, (t_prep1 - t_prep0), (t_pred1 - t_pred0)
             
-            train_l2, time_l2_prep, time_l2_pred = compute_l2(train_coll_loader)
+            eval_subset = config.train.eval_subset_size
+            train_l2, time_l2_prep, time_l2_pred = compute_l2(train_coll_loader, eval_subset)
             
             # Update history
             history["train/total_loss"].append(train_metrics["total_loss"])
@@ -426,18 +444,20 @@ def train_full_model(
                     f"Total: {elapsed_total:.1f}s"
                 )
             
-            # Save periodic checkpoints
-            if epoch % max(1, config.train.epochs // 5) == 0:
-                checkpoint_path = Path(config.train.checkpoint_dir) / f"checkpoint_epoch{epoch:04d}.pt"
-                checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-                torch.save({
-                    "epoch": epoch,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "loss": train_metrics["total_loss"],
-                    "config": config,
-                }, checkpoint_path)
-                mlflow.log_artifact(str(checkpoint_path))
+            # Save periodic checkpoints (if enabled)
+            if config.train.checkpoint_ratio > 0:
+                checkpoint_interval = max(1, int(config.train.epochs * config.train.checkpoint_ratio))
+                if epoch % checkpoint_interval == 0:
+                    checkpoint_path = Path(config.train.checkpoint_dir) / f"checkpoint_epoch{epoch:04d}.pt"
+                    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+                    torch.save({
+                        "epoch": epoch,
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "loss": train_metrics["total_loss"],
+                        "config": config,
+                    }, checkpoint_path)
+                    mlflow.log_artifact(str(checkpoint_path))
             
             # Save model state for evolution plot at specific epochs
             if epoch in evolution_epochs:

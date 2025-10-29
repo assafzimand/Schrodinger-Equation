@@ -111,10 +111,10 @@ def sample_initial_condition(
 
 def sample_boundary_conditions(
     n_times: int,
-    x_boundaries: Tuple[float, float],
+    x_range: Tuple[float, float],
     t_range: Tuple[float, float],
     seed: int = 42,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Sample paired boundary points at identical times for x = x_min and x = x_max.
 
     For periodic BC, we need h(x_min, t) = h(x_max, t) and
@@ -124,30 +124,26 @@ def sample_boundary_conditions(
 
     Args:
         n_times: Number of distinct time values (N_b)
-        x_boundaries: (x_min, x_max) tuple
+        x_range: (x_min, x_max) tuple
         t_range: (t_min, t_max) tuple
         seed: Random seed
 
     Returns:
-        Tuple of (x_samples, t_samples) arrays of length 2*n_times, ordered as
-        all left boundary points first, followed by all right boundary points,
+        Tuple of (x_left, t_left, x_right, t_right) arrays of length 2*n_times,
+        ordered as all left boundary points first, followed by all right boundary points,
         with identical time ordering across both halves.
     """
     rng = np.random.RandomState(seed)
-    x_min, x_max = x_boundaries
-    t_min, t_max = t_range
-
-    # Sample N_b time values uniformly
-    t_samples = rng.uniform(t_min, t_max, size=n_times)
-
-    # Build paired boundary coordinates with identical time ordering
-    x_left = np.full(n_times, x_min)
-    x_right = np.full(n_times, x_max)
-
-    x_all = np.concatenate([x_left, x_right])
-    t_all = np.concatenate([t_samples, t_samples])
-
-    return x_all, t_all
+    t_samples = rng.uniform(t_range[0], t_range[1], size=n_times)
+    
+    # Create paired boundary points at x_min and x_max for each time
+    x_left = np.full(n_times, x_range[0])
+    t_left = t_samples
+    
+    x_right = np.full(n_times, x_range[1])
+    t_right = t_samples # Same times for pairing
+    
+    return x_left, t_left, x_right, t_right
 
 
 def solve_on_grid(
@@ -295,15 +291,17 @@ def generate_dataset(
     if verbose:
         print(f"\n4. Sampling boundary conditions (N_b={dataset_cfg.n_boundary}):")
 
-    x_b, t_b = sample_boundary_conditions(
+    x_b_left, t_b_left, x_b_right, t_b_right = sample_boundary_conditions(
         n_times=dataset_cfg.n_boundary,
-        x_boundaries=(solver_cfg.x_min, solver_cfg.x_max),
+        x_range=(solver_cfg.x_min, solver_cfg.x_max),
         t_range=(solver_cfg.t_min, solver_cfg.t_max),
         seed=dataset_cfg.seed + 2,
     )
 
     if verbose:
-        print(f"   ✓ Generated {len(x_b)} boundary condition points")
+        print(f"   ✓ Generated {len(x_b_left)} left boundary points")
+        print(f"   ✓ Generated {len(x_b_right)} right boundary points")
+        print(f"  Total boundary points: {len(x_b_left) + len(x_b_right)}")
 
     # 5. Interpolate solution to all sample points
     if verbose:
@@ -311,7 +309,8 @@ def generate_dataset(
 
     h_f = interpolate_solution(x_grid, t_grid, h_solution, x_f, t_f)
     h_0 = interpolate_solution(x_grid, t_grid, h_solution, x_0, t_0)
-    h_b = interpolate_solution(x_grid, t_grid, h_solution, x_b, t_b)
+    h_b_left = interpolate_solution(x_grid, t_grid, h_solution, x_b_left, t_b_left)
+    h_b_right = interpolate_solution(x_grid, t_grid, h_solution, x_b_right, t_b_right)
 
     if verbose:
         print(f"   ✓ Interpolated collocation points")
@@ -330,19 +329,19 @@ def generate_dataset(
         "t_0": t_0.astype(np.float32),
         "u_0": h_0.real.astype(np.float32),
         "v_0": h_0.imag.astype(np.float32),
-        # Boundary condition
-        "x_b": x_b.astype(np.float32),
-        "t_b": t_b.astype(np.float32),
-        "u_b": h_b.real.astype(np.float32),
-        "v_b": h_b.imag.astype(np.float32),
+        # Boundary condition points (now split)
+        "x_b_left": x_b_left.astype(np.float32),
+        "t_b_left": t_b_left.astype(np.float32),
+        "x_b_right": x_b_right.astype(np.float32),
+        "t_b_right": t_b_right.astype(np.float32),
     }
 
     if verbose:
         print("\n6. Dataset summary:")
         print(f"   Collocation:  {len(x_f)} points")
         print(f"   Initial:      {len(x_0)} points")
-        print(f"   Boundary:     {len(x_b)} points")
-        print(f"   Total:        {len(x_f) + len(x_0) + len(x_b)} points")
+        print(f"   Boundary:     {len(x_b_left) + len(x_b_right)} points")
+        print(f"   Total:        {len(x_f) + len(x_0) + len(x_b_left) + len(x_b_right)} points")
 
     return dataset
 
@@ -378,7 +377,33 @@ def load_dataset(load_path: str) -> Dict[str, np.ndarray]:
         Dictionary of arrays
     """
     data = np.load(load_path)
-    return {key: data[key] for key in data.files}
+    # Compatibility for old datasets with unified 'x_b', 't_b'
+    if 'x_b' in data:
+        print("  (Found old dataset format, splitting BC points for compatibility)")
+        x_b = data['x_b']
+        t_b = data['t_b']
+        
+        # Heuristic split assumes alternating or simple structure
+        # This is NOT robust but provides a fallback
+        x_min = np.min(x_b)
+        x_max = np.max(x_b)
+        
+        left_mask = np.isclose(x_b, x_min)
+        right_mask = np.isclose(x_b, x_max)
+        
+        dataset = {key: data[key] for key in data}
+        dataset['x_b_left'] = x_b[left_mask]
+        dataset['t_b_left'] = t_b[left_mask]
+        dataset['x_b_right'] = x_b[right_mask]
+        dataset['t_b_right'] = t_b[right_mask]
+        
+        # Remove old keys
+        del dataset['x_b']
+        del dataset['t_b']
+        
+        return dataset
+        
+    return {key: data[key] for key in data}
 
 
 if __name__ == "__main__":

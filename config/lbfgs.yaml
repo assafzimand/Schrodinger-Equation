@@ -1,0 +1,41 @@
+# L-BFGS Fine-tuning Configuration
+# Fine-tunes a pre-trained model using L-BFGS optimizer for better convergence
+
+lbfgs:
+  # L-BFGS optimizer parameters
+  max_iter: 50000
+  history_size: 50
+  tolerance_grad: 1e-7
+  tolerance_change: 1e-9
+  line_search_fn: "strong_wolfe"
+  
+  # Training settings
+  seed: 42
+  device: "auto"  # cuda, cpu, or auto
+  
+  # MLflow run ID to resume from (loads best_model.pt from that run)
+  # Example: "6b911c7f0a7b4ba583dd716ca7dc85df"
+  resume_from_run_id: ""  # ⚠️ UPDATE THIS with your MLflow run ID
+  
+  # Alternative: direct checkpoint path (used if resume_from_run_id is empty)
+  resume_checkpoint: "outputs/checkpoints/best_model.pt"
+  
+  # Where to save the fine-tuned model
+  save_path: "outputs/checkpoints/model_lbfgs.pt"
+  
+  # Loss weights (should match the pre-trained model)
+  weight_initial: 1.0
+  weight_boundary: 1.0
+  weight_residual: 1.0
+  
+  # Logging and evaluation
+  log_interval: 1000  # Print metrics every N iterations
+  eval_interval: 5000  # Run evaluation every N iterations
+  
+  # MLflow tracking
+  mlflow_experiment: "schrodinger_lbfgs"
+  
+  # Dataset path
+  dataset_path: "data/processed/dataset.npz"
+  eval_dataset_path: "data/processed/dataset_eval.npz"
+

@@ -52,6 +52,20 @@ def generate_eval_dataset(
     print(f"  Initial points: {n_initial}")
     print(f"  Boundary time points: {n_boundary}")
 
+    # Solve NLSE on fine grid FIRST to get ground truth
+    print("\nSolving NLSE on fine grid...")
+    print(f"  Grid size: {config.solver.nx} × {config.solver.nt}")
+    x_grid, t_grid, h_solution = solve_nlse_full_grid(
+        x_min=config.solver.x_min,
+        x_max=config.solver.x_max,
+        t_min=config.solver.t_min,
+        t_max=config.solver.t_max,
+        nx=config.solver.nx,
+        nt=config.solver.nt,
+        alpha=config.solver.alpha,
+    )
+    print(f"  ✓ Solution computed, shape: {h_solution.shape}")
+
     # Set random seed
     np.random.seed(config.dataset.seed)
 
@@ -95,89 +109,80 @@ def generate_eval_dataset(
     rng.shuffle(x_0)
     t_0 = np.zeros(n_initial)
 
-    # Generate boundary condition points (x = x_min and x = x_max)
+    # Generate boundary condition points (t>0)
     print("Generating boundary condition points...")
     t_b_samples = np.linspace(
-        config.solver.t_min, config.solver.t_max, n_boundary, endpoint=False
+        config.solver.t_min, config.solver.t_max, n_boundary
     )
+    x_b_left = np.full(n_boundary, config.solver.x_min)
+    t_b_left = t_b_samples
+    x_b_right = np.full(n_boundary, config.solver.x_max)
+    t_b_right = t_b_samples
+    
+    print(f"  ✓ {n_boundary} left points, {n_boundary} right points generated")
 
-    # For each time point, sample both boundaries
-    x_b = np.concatenate(
-        [
-            np.full(n_boundary, config.solver.x_min),
-            np.full(n_boundary, config.solver.x_max),
-        ]
-    )
-    t_b = np.concatenate([t_b_samples, t_b_samples])
-
-    # Solve NLSE on fine grid
-    print("\nSolving NLSE on fine grid...")
-    print(f"  Grid size: {config.solver.nx} × {config.solver.nt}")
-
-    x_grid, t_grid, h_solution = solve_nlse_full_grid(
-        x_min=config.solver.x_min,
-        x_max=config.solver.x_max,
-        t_min=config.solver.t_min,
-        t_max=config.solver.t_max,
-        nx=config.solver.nx,
-        nt=config.solver.nt,
-        alpha=config.solver.alpha,
-    )
-
-    print(f"  Solution shape: {h_solution.shape}")
-
-    # Interpolate to sampled points
+    # Combine all points (for interpolation)
+    x_all = np.concatenate([x_f, x_0, x_b_left, x_b_right])
+    t_all = np.concatenate([t_f, t_0, t_b_left, t_b_right])
+    
+    # Interpolate solution
     print("\nInterpolating to sampled points...")
 
-    def interpolate_solution(x_query, t_query):
-        """Bilinear interpolation of the solution.
-        
-        Note: h_solution has shape (nt, nx) i.e. h_solution[t, x]
-        """
-        # Find indices
-        x_idx = np.searchsorted(x_grid, x_query) - 1
+    # Helper for interpolation
+    def interpolate_solution(
+        x_query: np.ndarray, 
+        t_query: np.ndarray, 
+        x_grid: np.ndarray, 
+        t_grid: np.ndarray, 
+        h_solution: np.ndarray
+    ):
+        """Interpolate from fine grid to query points."""
         t_idx = np.searchsorted(t_grid, t_query) - 1
+        x_idx = np.searchsorted(x_grid, x_query) - 1
+        
+        # Clip indices to be within bounds
+        t_idx = np.clip(t_idx, 0, h_solution.shape[0] - 2)
+        x_idx = np.clip(x_idx, 0, h_solution.shape[1] - 2)
+        
+        # Bilinear interpolation
+        t1 = t_grid[t_idx]
+        t2 = t_grid[t_idx + 1]
+        x1 = x_grid[x_idx]
+        x2 = x_grid[x_idx + 1]
 
-        # Clip indices
-        x_idx = np.clip(x_idx, 0, len(x_grid) - 2)
-        t_idx = np.clip(t_idx, 0, len(t_grid) - 2)
+        f_q11 = h_solution[t_idx, x_idx]
+        f_q21 = h_solution[t_idx, x_idx + 1]
+        f_q12 = h_solution[t_idx + 1, x_idx]
+        f_q22 = h_solution[t_idx + 1, x_idx + 1]
 
-        # Get weights
-        x_weight = (x_query - x_grid[x_idx]) / (x_grid[x_idx + 1] - x_grid[x_idx])
-        t_weight = (t_query - t_grid[t_idx]) / (t_grid[t_idx + 1] - t_grid[t_idx])
+        term1 = f_q11 * (x2 - x_query) * (t2 - t_query)
+        term2 = f_q21 * (x_query - x1) * (t2 - t_query)
+        term3 = f_q12 * (x2 - x_query) * (t_query - t1)
+        term4 = f_q22 * (x_query - x1) * (t_query - t1)
 
-        # Handle periodic boundary for x
-        x_idx_p1 = (x_idx + 1) % len(x_grid)
-
-        # Bilinear interpolation (note: h_solution is indexed as [t, x])
-        h_00 = h_solution[t_idx, x_idx]
-        h_10 = h_solution[t_idx, x_idx_p1]
-        h_01 = h_solution[t_idx + 1, x_idx]
-        h_11 = h_solution[t_idx + 1, x_idx_p1]
-
-        h_interp = (
-            (1 - x_weight) * (1 - t_weight) * h_00
-            + x_weight * (1 - t_weight) * h_10
-            + (1 - x_weight) * t_weight * h_01
-            + x_weight * t_weight * h_11
-        )
-
+        h_interp = (term1 + term2 + term3 + term4) / ((x2 - x1) * (t2 - t1))
         return h_interp
 
-    # Interpolate for collocation points
-    h_f = interpolate_solution(x_f, t_f)
+    # Interpolate for each set of points
+    h_f = interpolate_solution(x_f, t_f, x_grid, t_grid, h_solution)
+    h_0 = interpolate_solution(x_0, t_0, x_grid, t_grid, h_solution)
+    h_b_left = interpolate_solution(x_b_left, t_b_left, x_grid, t_grid, h_solution)
+    h_b_right = interpolate_solution(x_b_right, t_b_right, x_grid, t_grid, h_solution)
+    
+    # Extract real and imag parts (for saving)
     u_f = h_f.real.astype(np.float32)
     v_f = h_f.imag.astype(np.float32)
 
     # Interpolate for initial points
-    h_0 = interpolate_solution(x_0, t_0)
     u_0 = h_0.real.astype(np.float32)
     v_0 = h_0.imag.astype(np.float32)
 
     # Interpolate for boundary points
-    h_b = interpolate_solution(x_b, t_b)
-    u_b = h_b.real.astype(np.float32)
-    v_b = h_b.imag.astype(np.float32)
+    u_b_left = h_b_left.real.astype(np.float32)
+    v_b_left = h_b_left.imag.astype(np.float32)
+
+    u_b_right = h_b_right.real.astype(np.float32)
+    v_b_right = h_b_right.imag.astype(np.float32)
 
     # Save dataset
     print(f"\nSaving evaluation dataset...")
@@ -186,25 +191,28 @@ def generate_eval_dataset(
 
     np.savez(
         output_path,
+        # Collocation
         x_f=x_f.astype(np.float32),
         t_f=t_f.astype(np.float32),
         u_f=u_f,
         v_f=v_f,
+        # Initial condition
         x_0=x_0.astype(np.float32),
         t_0=t_0.astype(np.float32),
         u_0=u_0,
         v_0=v_0,
-        x_b=x_b.astype(np.float32),
-        t_b=t_b.astype(np.float32),
-        u_b=u_b,
-        v_b=v_b,
+        # Boundary condition (split)
+        x_b_left=x_b_left.astype(np.float32),
+        t_b_left=t_b_left.astype(np.float32),
+        x_b_right=x_b_right.astype(np.float32),
+        t_b_right=t_b_right.astype(np.float32),
     )
 
-    print(f"  ✓ Saved to: {output_path}")
+    print(f"\n✓ Evaluation dataset saved to: {output_path}")
     print(f"\nDataset Summary:")
     print(f"  Collocation: {len(x_f)} points")
     print(f"  Initial: {len(x_0)} points")
-    print(f"  Boundary: {len(x_b)} points")
+    print(f"  Boundary: {len(x_b_left) + len(x_b_right)} points")
     print(f"  File size: {output_path.stat().st_size / 1024:.1f} KB")
 
     return output_path

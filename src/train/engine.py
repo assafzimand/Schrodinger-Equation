@@ -40,6 +40,7 @@ def compute_relative_l2_error(
     t: torch.Tensor,
     u_true: torch.Tensor,
     v_true: torch.Tensor,
+    subset_size: int = 0,
 ) -> float:
     """Compute phase-invariant relative L² error between prediction and ground truth.
 
@@ -55,11 +56,20 @@ def compute_relative_l2_error(
         t: Temporal coordinates
         u_true: True real part
         v_true: True imaginary part
+        subset_size: Number of random points to use (0 = use all)
 
     Returns:
         Phase-invariant relative L² error as a scalar
     """
     with torch.no_grad():
+        # Optionally subsample for faster evaluation
+        if subset_size > 0 and len(x) > subset_size:
+            idx = torch.randperm(len(x), device=x.device)[:subset_size]
+            x = x[idx]
+            t = t[idx]
+            u_true = u_true[idx]
+            v_true = v_true[idx]
+        
         # Predict
         uv_pred = model(x, t)
         u_pred = uv_pred[:, 0]
@@ -155,8 +165,10 @@ def split_dataset(
         "t_0": dataset["t_0"],
         "u_0": dataset["u_0"],
         "v_0": dataset["v_0"],
-        "x_b": dataset["x_b"],
-        "t_b": dataset["t_b"],
+        "x_b_left": dataset["x_b_left"],
+        "t_b_left": dataset["t_b_left"],
+        "x_b_right": dataset["x_b_right"],
+        "t_b_right": dataset["t_b_right"],
     }
 
     val_dataset = {
@@ -168,8 +180,10 @@ def split_dataset(
         "t_0": dataset["t_0"],
         "u_0": dataset["u_0"],
         "v_0": dataset["v_0"],
-        "x_b": dataset["x_b"],
-        "t_b": dataset["t_b"],
+        "x_b_left": dataset["x_b_left"],
+        "t_b_left": dataset["t_b_left"],
+        "x_b_right": dataset["x_b_right"],
+        "t_b_right": dataset["t_b_right"],
     }
 
     return train_dataset, val_dataset
@@ -179,7 +193,7 @@ def create_dataloaders(
     dataset: Dict[str, np.ndarray],
     batch_size: int,
     device: str,
-) -> Tuple[DataLoader, DataLoader, DataLoader]:
+) -> Tuple[DataLoader, DataLoader, DataLoader, DataLoader]:
     """Create dataloaders for collocation, initial, and boundary points.
 
     Args:
@@ -188,7 +202,7 @@ def create_dataloaders(
         device: Device to place tensors on
 
     Returns:
-        Tuple of (collocation_loader, initial_loader, boundary_loader)
+        Tuple of (collocation, initial, boundary_left, boundary_right)
     """
     # Collocation data (ensure float32 for GPU efficiency)
     x_f = torch.from_numpy(dataset["x_f"]).float().unsqueeze(1).to(device)
@@ -216,28 +230,37 @@ def create_dataloaders(
         shuffle=False,
     )
 
-    # Boundary condition data (ensure float32 for GPU efficiency)
-    x_b = torch.from_numpy(dataset["x_b"]).float().unsqueeze(1).to(device)
-    t_b = torch.from_numpy(dataset["t_b"]).float().unsqueeze(1).to(device)
-
-    boundary_dataset = TensorDataset(x_b, t_b)
-    boundary_loader = DataLoader(
-        boundary_dataset,
-        batch_size=len(boundary_dataset),  # Use all boundary points
+    # Boundary condition data (now split)
+    x_b_left = torch.from_numpy(dataset["x_b_left"]).float().unsqueeze(1).to(device)
+    t_b_left = torch.from_numpy(dataset["t_b_left"]).float().unsqueeze(1).to(device)
+    boundary_left_dataset = TensorDataset(x_b_left, t_b_left)
+    boundary_left_loader = DataLoader(
+        boundary_left_dataset,
+        batch_size=len(boundary_left_dataset),
+        shuffle=False,
+    )
+    
+    x_b_right = torch.from_numpy(dataset["x_b_right"]).float().unsqueeze(1).to(device)
+    t_b_right = torch.from_numpy(dataset["t_b_right"]).float().unsqueeze(1).to(device)
+    boundary_right_dataset = TensorDataset(x_b_right, t_b_right)
+    boundary_right_loader = DataLoader(
+        boundary_right_dataset,
+        batch_size=len(boundary_right_dataset),
         shuffle=False,
     )
 
-    return collocation_loader, initial_loader, boundary_loader
+    return collocation_loader, initial_loader, boundary_left_loader, boundary_right_loader
 
 
 def train_epoch(
     model: nn.Module,
     loss_fn: SchrodingerLoss,
     optimizer: torch.optim.Optimizer,
-    scaler: torch.cuda.amp.GradScaler,
+    scaler: torch.amp.GradScaler,
     collocation_loader: DataLoader,
     initial_loader: DataLoader,
-    boundary_loader: DataLoader,
+    boundary_left_loader: DataLoader,
+    boundary_right_loader: DataLoader,
     device: torch.device,
 ) -> Dict[str, float]:
     """Train for one epoch with AMP support.
@@ -249,7 +272,8 @@ def train_epoch(
         scaler: GradScaler for mixed precision
         collocation_loader: DataLoader for collocation points
         initial_loader: DataLoader for initial condition
-        boundary_loader: DataLoader for boundary conditions
+        boundary_left_loader: DataLoader for left boundary
+        boundary_right_loader: DataLoader for right boundary
         device: Device to use
 
     Returns:
@@ -277,7 +301,8 @@ def train_epoch(
 
     # Get initial and boundary data (used for all batches)
     x_0, t_0, u_0, v_0 = next(iter(initial_loader))
-    x_b, t_b = next(iter(boundary_loader))
+    x_b_left, t_b_left = next(iter(boundary_left_loader))
+    x_b_right, t_b_right = next(iter(boundary_right_loader))
     
     # Enable AMP on CUDA only
     use_amp = (device.type == "cuda")
@@ -286,9 +311,9 @@ def train_epoch(
     for x_f, t_f, u_f, v_f in collocation_loader:
         optimizer.zero_grad(set_to_none=True)
 
-        # Forward pass with autocast
+        # Forward pass with autocast (updated to torch.amp API)
         t_fwd0 = time.time()
-        with torch.cuda.amp.autocast(enabled=use_amp):
+        with torch.amp.autocast("cuda", enabled=use_amp):
             # Compute loss with all components
             total_loss, mse_0, mse_b, mse_f = loss_fn(
                 model,
@@ -296,8 +321,10 @@ def train_epoch(
                 t_0,
                 u_0,
                 v_0,
-                x_b,
-                t_b,
+                x_b_left,
+                t_b_left,
+                x_b_right,
+                t_b_right,
                 x_f,
                 t_f,
                 return_components=True,
@@ -492,7 +519,12 @@ def train(
     )
 
     # Create dataloaders
-    collocation_loader, initial_loader, boundary_loader = create_dataloaders(
+    (
+        collocation_loader, 
+        initial_loader, 
+        boundary_left_loader, 
+        boundary_right_loader
+    ) = create_dataloaders(
         dataset, config.train.batch_size, str(device)
     )
 
@@ -500,7 +532,7 @@ def train(
         print(
             f"\nDataset: {len(dataset['x_f'])} collocation, "
             f"{len(dataset['x_0'])} initial, "
-            f"{len(dataset['x_b'])} boundary"
+            f"{len(dataset['x_b_left']) + len(dataset['x_b_right'])} boundary"
         )
         print(f"Batch size: {config.train.batch_size}")
         print(f"Batches per epoch: {len(collocation_loader)}")
@@ -510,8 +542,8 @@ def train(
     if verbose:
         print(f"\nMLflow run ID: {run_id}")
 
-    # Initialize GradScaler for AMP
-    scaler = torch.cuda.amp.GradScaler(enabled=(device.type == "cuda"))
+    # Initialize GradScaler for AMP (updated to torch.amp API)
+    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
     # Training loop
     if verbose:
@@ -537,7 +569,8 @@ def train(
             scaler,
             collocation_loader,
             initial_loader,
-            boundary_loader,
+            boundary_left_loader,
+            boundary_right_loader,
             device,
         )
 
@@ -679,8 +712,10 @@ if __name__ == "__main__":
         "t_0": dataset["t_0"],
         "u_0": dataset["u_0"],
         "v_0": dataset["v_0"],
-        "x_b": dataset["x_b"],
-        "t_b": dataset["t_b"],
+        "x_b_left": dataset["x_b_left"],
+        "t_b_left": dataset["t_b_left"],
+        "x_b_right": dataset["x_b_right"],
+        "t_b_right": dataset["t_b_right"],
     }
 
     print(f"Using subset: {subset_size} collocation points")
