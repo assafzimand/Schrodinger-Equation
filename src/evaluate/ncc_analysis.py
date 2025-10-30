@@ -53,43 +53,85 @@ def load_model_from_mlflow(run_id: str, device: torch.device, mlruns_path: str =
         activation=activation
     )
     
-    # Try to load checkpoint from MLflow artifacts first
+    # Try to load checkpoint from MLflow artifacts first (root and 'checkpoints/')
     checkpoint_loaded = False
-    artifact_path = None
-    
+    selected_artifact_path = None
+
     try:
-        artifacts = client.list_artifacts(run_id, path="checkpoints")
-        
-        for artifact in artifacts:
-            if "best_model" in artifact.path:
-                artifact_path = artifact.path
+        import re
+        import tempfile
+        import os
+
+        candidate_paths = []
+
+        # 1) Root artifacts
+        try:
+            root_artifacts = client.list_artifacts(run_id, path="")
+            for art in root_artifacts:
+                candidate_paths.append(art.path)
+        except Exception:
+            pass
+
+        # 2) 'checkpoints/' subdir
+        try:
+            ckpt_artifacts = client.list_artifacts(run_id, path="checkpoints")
+            for art in ckpt_artifacts:
+                candidate_paths.append(art.path)
+        except Exception:
+            pass
+
+        # Prefer best_model.pt, then final_model.pt
+        norm_paths = [p.replace("\\", "/") for p in candidate_paths]
+        for name in ["best_model.pt", "final_model.pt"]:
+            for p in norm_paths:
+                if p.endswith(name):
+                    selected_artifact_path = p
+                    break
+            if selected_artifact_path is not None:
                 break
-        
-        if artifact_path is None and artifacts:
-            # Fallback to any checkpoint in MLflow
-            artifact_path = artifacts[0].path
-        
-        if artifact_path:
-            # Download artifact to temp location
-            import tempfile
-            import os
+
+        # If still none, pick the checkpoint_epoch with the largest epoch number
+        if selected_artifact_path is None:
+            max_epoch = -1
+            best_ckpt = None
+            pattern = re.compile(r"checkpoint_epoch(\d+)\.pt$")
+            for p in norm_paths:
+                m = pattern.search(p)
+                if m:
+                    epoch_num = int(m.group(1))
+                    if epoch_num > max_epoch:
+                        max_epoch = epoch_num
+                        best_ckpt = p
+            if best_ckpt is not None:
+                selected_artifact_path = best_ckpt
+
+        if selected_artifact_path is not None:
             temp_dir = tempfile.mkdtemp()
-            local_path = client.download_artifacts(run_id, artifact_path, temp_dir)
-            
+            local_path = client.download_artifacts(run_id, selected_artifact_path, temp_dir)
+
             # Load checkpoint
             checkpoint = torch.load(local_path, map_location=device, weights_only=False)
             model.load_state_dict(checkpoint['model_state_dict'])
-            
-            # Cleanup temp file
-            os.remove(local_path)
-            os.rmdir(temp_dir)
-            
+
+            # Cleanup temp file(s)
+            try:
+                os.remove(local_path)
+            except Exception:
+                pass
+            try:
+                os.rmdir(temp_dir)
+            except Exception:
+                pass
+
             checkpoint_loaded = True
-            print(f"  ✓ Model loaded from MLflow artifact: {artifact_path}")
-    
+            exp_id = run.info.experiment_id
+            full_artifact_path = f"mlruns/{exp_id}/{run_id}/artifacts/{selected_artifact_path}"
+            print(f"  ✓ Model loaded from MLflow artifact: {full_artifact_path}")
+        else:
+            print("  No suitable checkpoint artifact found in MLflow; trying local directory...")
     except Exception as e:
         print(f"  Could not load from MLflow artifacts: {e}")
-        print(f"  Trying local checkpoint directory...")
+        print("  Trying local checkpoint directory...")
     
     # Fallback to local checkpoint directory
     if not checkpoint_loaded:
@@ -112,9 +154,24 @@ def load_model_from_mlflow(run_id: str, device: torch.device, mlruns_path: str =
                 checkpoint_loaded = True
                 print(f"  ✓ Model loaded from local checkpoint: {final_model_path}")
             else:
-                raise ValueError(
-                    f"No checkpoint found for run {run_id} in MLflow or local directory"
-                )
+                # Try the latest checkpoint_epoch*.pt if present locally
+                import re, glob
+                pattern = str(checkpoint_dir / "checkpoint_epoch*.pt")
+                ckpts = glob.glob(pattern)
+                if ckpts:
+                    # pick the one with the largest epoch
+                    def epoch_num(p):
+                        m = re.search(r"checkpoint_epoch(\d+)\.pt$", p.replace("\\", "/"))
+                        return int(m.group(1)) if m else -1
+                    latest = max(ckpts, key=epoch_num)
+                    checkpoint = torch.load(latest, map_location=device, weights_only=False)
+                    model.load_state_dict(checkpoint['model_state_dict'])
+                    checkpoint_loaded = True
+                    print(f"  ✓ Model loaded from local checkpoint: {latest}")
+                else:
+                    raise ValueError(
+                        f"No checkpoint found for run {run_id} in MLflow or local directory"
+                    )
     
     model.to(device)
     model.eval()
@@ -144,13 +201,38 @@ def load_dataset_npz(path: str) -> Dict[str, np.ndarray]:
     return data
 
 
-def make_class_labels_from_solver(data: Dict[str, np.ndarray], bins: int, amp_range: List[float]) -> np.ndarray:
-    """Compute ground-truth amplitude and bin-based class labels."""
-    u, v = data["u_f"], data["v_f"]
-    amp = np.sqrt(u**2 + v**2)
-    edges = np.linspace(amp_range[0], amp_range[1], bins + 1)
-    labels = np.clip(np.digitize(amp, edges) - 1, 0, bins - 1)
+def make_class_labels_from_solver(data: Dict[str, np.ndarray], bins: int,
+                                  u_range: List[float] = [-5.0, 5.0],
+                                  v_range: List[float] = [-5.0, 5.0]) -> np.ndarray:
+    """Compute ground-truth 2D (u,v)-based class labels.
+
+    The (u,v) domain is divided into a bins×bins grid.
+    Each (u,v) sample is assigned to one of bins**2 classes.
+
+    Args:
+        data: Dict with ground-truth arrays containing keys 'u_f', 'v_f'
+        bins: Number of bins per axis (total classes = bins**2)
+        u_range: [min, max] range for u
+        v_range: [min, max] range for v
+
+    Returns:
+        labels: (N,) numpy array of class indices in [0, bins**2 - 1]
+    """
+    u = np.clip(data["u_f"], u_range[0], u_range[1])
+    v = np.clip(data["v_f"], v_range[0], v_range[1])
+
+    # Uniform bin edges
+    u_edges = np.linspace(u_range[0], u_range[1], bins + 1)
+    v_edges = np.linspace(v_range[0], v_range[1], bins + 1)
+
+    # Compute 2D bin indices
+    u_bin = np.clip(np.digitize(u, u_edges) - 1, 0, bins - 1)
+    v_bin = np.clip(np.digitize(v, v_edges) - 1, 0, bins - 1)
+
+    # Flatten to single class index: class_id = u_bin * bins + v_bin
+    labels = (u_bin * bins + v_bin).astype(np.int32)
     return labels
+
 
 
 def collect_layer_activations(model, x, t, layers: List[str], batch_size: int, device: torch.device):
@@ -219,16 +301,20 @@ def main():
     parser.add_argument("--run_id", type=str, required=True, help="MLflow run ID to analyze")
     parser.add_argument("--dataset", type=str, default="data/processed/dataset.npz",
                         help="Path to dataset .npz file")
-    parser.add_argument("--bins", type=int, default=200, help="Number of bins for amplitude classes")
-    parser.add_argument("--amp_range", type=float, nargs=2, default=[0, 4],
-                        help="Amplitude range for binning")
+    parser.add_argument("--bins", type=int, default=20, help="Number of bins for amplitude classes")
+    parser.add_argument("--u_range", type=float, nargs=2, default=[-5.0, 5.0],
+                        help="u range for binning")
+    parser.add_argument("--v_range", type=float, nargs=2, default=[-5.0, 5.0],
+                        help="v range for binning")
     parser.add_argument("--batch_size", type=int, default=1024, help="Batch size for forward passes")
     
     args = parser.parse_args()
     
     # ---- CONFIG ----
     bins = args.bins
-    amp_range = args.amp_range
+    u_range = args.u_range
+    v_range = args.v_range
+    num_classes = bins ** 2
     layers_to_eval = ["layer_1", "layer_2", "layer_3", "layer_4", "layer_5"]
     batch_size = args.batch_size
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

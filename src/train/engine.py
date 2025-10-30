@@ -557,6 +557,10 @@ def train(
     
     # Use separate eval dataset if provided, otherwise use training dataset
     dataset_for_eval = eval_dataset if eval_dataset is not None else dataset
+
+    # Track best eval L2 and save best_model.pt
+    best_eval_l2 = float("inf")
+    best_checkpoint_path: Optional[Path] = None
     
     for epoch in range(1, config.train.epochs + 1):
         epoch_start = time.time()
@@ -574,66 +578,42 @@ def train(
             device,
         )
 
-        # Determine if we should evaluate this epoch
-        should_evaluate = (epoch % eval_interval == 0) or (epoch == config.train.epochs)
-        
-        if should_evaluate:
-            # Evaluate on eval dataset
-            eval_metrics = evaluate(model, dataset_for_eval, device)
+        # Always evaluate relative L2 each epoch on eval dataset (lightweight)
+        eval_metrics = evaluate(model, dataset_for_eval, device)
 
-            # Log to MLflow (both train and eval metrics)
-            mlflow.log_metrics(
-                {
-                    "train/total_loss": train_metrics["total_loss"],
-                    "train/mse_0": train_metrics["mse_0"],
-                    "train/mse_b": train_metrics["mse_b"],
-                    "train/mse_f": train_metrics["mse_f"],
-                    # Timings (train)
-                    "time_forward": train_metrics.get("time/forward", 0.0),
-                    "time_backward": train_metrics.get("time/backward", 0.0),
-                    "time_step": train_metrics.get("time/step", 0.0),
-                    "time_ic": train_metrics.get("time/ic", 0.0),
-                    "time_bc": train_metrics.get("time/bc", 0.0),
-                    "time_pde": train_metrics.get("time/pde", 0.0),
-                    "time_pde_predict": train_metrics.get("time/pde/predict", 0.0),
-                    "time_pde_derivatives": train_metrics.get("time/pde/derivatives", 0.0),
-                    "time_pde_residual": train_metrics.get("time/pde/residual", 0.0),
-                    "eval/relative_l2_error": eval_metrics["relative_l2_error"],
-                    "eval_time_prepare": eval_metrics.get("eval_time_prepare", 0.0),
-                    "eval_time_predict_metric": eval_metrics.get("eval_time_predict_metric", 0.0),
-                },
-                step=epoch,
-            )
-        else:
-            # Log only training metrics
-            mlflow.log_metrics(
-                {
-                    "train/total_loss": train_metrics["total_loss"],
-                    "train/mse_0": train_metrics["mse_0"],
-                    "train/mse_b": train_metrics["mse_b"],
-                    "train/mse_f": train_metrics["mse_f"],
-                    # Timings (train)
-                    "time_forward": train_metrics.get("time/forward", 0.0),
-                    "time_backward": train_metrics.get("time/backward", 0.0),
-                    "time_step": train_metrics.get("time/step", 0.0),
-                    "time_ic": train_metrics.get("time/ic", 0.0),
-                    "time_bc": train_metrics.get("time/bc", 0.0),
-                    "time_pde": train_metrics.get("time/pde", 0.0),
-                    "time_pde_predict": train_metrics.get("time/pde/predict", 0.0),
-                    "time_pde_derivatives": train_metrics.get("time/pde/derivatives", 0.0),
-                    "time_pde_residual": train_metrics.get("time/pde/residual", 0.0),
-                },
-                step=epoch,
-            )
+        # Log metrics each epoch (train + eval L2)
+        mlflow.log_metrics(
+            {
+                "train/total_loss": train_metrics["total_loss"],
+                "train/mse_0": train_metrics["mse_0"],
+                "train/mse_b": train_metrics["mse_b"],
+                "train/mse_f": train_metrics["mse_f"],
+                # Timings (train)
+                "time_forward": train_metrics.get("time/forward", 0.0),
+                "time_backward": train_metrics.get("time/backward", 0.0),
+                "time_step": train_metrics.get("time/step", 0.0),
+                "time_ic": train_metrics.get("time/ic", 0.0),
+                "time_bc": train_metrics.get("time/bc", 0.0),
+                "time_pde": train_metrics.get("time/pde", 0.0),
+                "time_pde_predict": train_metrics.get("time/pde/predict", 0.0),
+                "time_pde_derivatives": train_metrics.get("time/pde/derivatives", 0.0),
+                "time_pde_residual": train_metrics.get("time/pde/residual", 0.0),
+                # Eval L2
+                "eval/relative_l2_error": eval_metrics["relative_l2_error"],
+                "eval_time_prepare": eval_metrics.get("eval_time_prepare", 0.0),
+                "eval_time_predict_metric": eval_metrics.get("eval_time_predict_metric", 0.0),
+            },
+            step=epoch,
+        )
 
         epoch_time = time.time() - epoch_start
 
         # Update epoch time metric (log separately to avoid overwriting the dict above)
         mlflow.log_metric("time_epoch", epoch_time, step=epoch)
 
-        # Print progress (at eval epochs only)
-        if verbose and should_evaluate:
-            l2_str = f"L²: {eval_metrics['relative_l2_error']:.6f}" if should_evaluate else "L²: (skipped)"
+        # Print progress each epoch (include L2)
+        if verbose:
+            l2_str = f"L²: {eval_metrics['relative_l2_error']:.6f}"
             print(
                 f"Epoch {epoch:4d}/{config.train.epochs} | "
                 f"Loss: {train_metrics['total_loss']:.6f} | "
@@ -646,6 +626,19 @@ def train(
                 f"t_step={train_metrics.get('time/step',0.0):.2f}s | "
                 f"epoch={epoch_time:.1f}s"
             )
+
+        # Update best checkpoint every epoch based on eval L2
+        if eval_metrics["relative_l2_error"] < best_eval_l2:
+            best_eval_l2 = eval_metrics["relative_l2_error"]
+            best_checkpoint_path = save_checkpoint(
+                model,
+                optimizer,
+                epoch,
+                train_metrics["total_loss"],
+                config,
+                filename="best_model.pt",
+            )
+            mlflow.log_artifact(str(best_checkpoint_path))
 
         # Save checkpoint periodically
         if epoch % max(1, config.train.epochs // 5) == 0:

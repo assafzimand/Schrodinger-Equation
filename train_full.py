@@ -332,42 +332,14 @@ def train_full_model(
             history["train/mse_f"].append(train_metrics["mse_f"])
             history["train/relative_l2_error"].append(train_l2)
             
-            # Evaluate on eval dataset periodically
-            should_evaluate = (epoch % eval_interval == 0) or (epoch == config.train.epochs)
-            if should_evaluate and eval_dataset is not None:
+            # Evaluate relative L2 on eval dataset every epoch (lightweight) if available
+            t_ml0 = time.time()
+            if eval_dataset is not None:
                 eval_l2, eval_time_l2_prep, eval_time_l2_pred = compute_l2(eval_coll_loader)
                 history["eval/relative_l2_error"].append(eval_l2)
-                t_ml0 = time.time()
-                mlflow.log_metrics({
-                    "train/total_loss": train_metrics["total_loss"],
-                    "train/mse_0": train_metrics["mse_0"],
-                    "train/mse_b": train_metrics["mse_b"],
-                    "train/mse_f": train_metrics["mse_f"],
-                    "train/relative_l2_error": train_l2,
-                    "eval/relative_l2_error": eval_l2,
-                    # timings
-                    "time_forward": train_metrics.get("time_forward", 0.0),
-                    "time_backward": train_metrics.get("time_backward", 0.0),
-                    "time_step": train_metrics.get("time_step", 0.0),
-                    "time_ic": train_metrics.get("time_ic", 0.0),
-                    "time_bc": train_metrics.get("time_bc", 0.0),
-                    "time_pde": train_metrics.get("time_pde", 0.0),
-                    "time_pde_predict": train_metrics.get("time_pde_predict", 0.0),
-                    "time_pde_derivatives": train_metrics.get("time_pde_derivatives", 0.0),
-                    "time_pde_residual": train_metrics.get("time_pde_residual", 0.0),
-                    "time_fetch_icbc": (t_fetch1 - t_fetch0),
-                    "time_batches": (t_batches1 - t_batches0),
-                    "time_l2_prepare": time_l2_prep,
-                    "time_l2_predict": time_l2_pred,
-                    "eval_time_l2_prepare": eval_time_l2_prep,
-                    "eval_time_l2_predict": eval_time_l2_pred,
-                }, step=epoch)
-                t_ml1 = time.time()
-
-                # Update best checkpoint on eval metric
-                current_metric = eval_l2
-                if current_metric < best_metric:
-                    best_metric = current_metric
+                # Update best checkpoint each epoch using eval L2
+                if eval_l2 < best_metric:
+                    best_metric = eval_l2
                     best_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
                     torch.save({
                         "epoch": epoch,
@@ -381,48 +353,34 @@ def train_full_model(
                     mlflow.log_artifact(str(best_checkpoint_path))
                     print(f"  ✓ New best {best_metric_name}: {best_metric:.6f} at epoch {epoch} → saved best_model.pt")
             else:
-                # Log only training metrics
-                t_ml0 = time.time()
-                mlflow.log_metrics({
-                    "train/total_loss": train_metrics["total_loss"],
-                    "train/mse_0": train_metrics["mse_0"],
-                    "train/mse_b": train_metrics["mse_b"],
-                    "train/mse_f": train_metrics["mse_f"],
-                    "train/relative_l2_error": train_l2,
-                    # timings
-                    "time_forward": train_metrics.get("time_forward", 0.0),
-                    "time_backward": train_metrics.get("time_backward", 0.0),
-                    "time_step": train_metrics.get("time_step", 0.0),
-                    "time_ic": train_metrics.get("time_ic", 0.0),
-                    "time_bc": train_metrics.get("time_bc", 0.0),
-                    "time_pde": train_metrics.get("time_pde", 0.0),
-                    "time_pde_predict": train_metrics.get("time_pde_predict", 0.0),
-                    "time_pde_derivatives": train_metrics.get("time_pde_derivatives", 0.0),
-                    "time_pde_residual": train_metrics.get("time_pde_residual", 0.0),
-                    "time_fetch_icbc": (t_fetch1 - t_fetch0),
-                    "time_batches": (t_batches1 - t_batches0),
-                    "time_l2_prepare": time_l2_prep,
-                    "time_l2_predict": time_l2_pred,
-                }, step=epoch)
-                t_ml1 = time.time()
+                eval_l2, eval_time_l2_prep, eval_time_l2_pred = (train_l2, 0.0, 0.0)
 
-                # If no eval set, track best on training metric
-                if eval_dataset is None:
-                    current_metric = train_l2
-                    if current_metric < best_metric:
-                        best_metric = current_metric
-                        best_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-                        torch.save({
-                            "epoch": epoch,
-                            "model_state_dict": model.state_dict(),
-                            "optimizer_state_dict": optimizer.state_dict(),
-                            "loss": train_metrics["total_loss"],
-                            "best_metric_name": best_metric_name,
-                            "best_metric_value": best_metric,
-                            "config": config,
-                        }, best_checkpoint_path)
-                        mlflow.log_artifact(str(best_checkpoint_path))
-                        print(f"  ✓ New best {best_metric_name}: {best_metric:.6f} at epoch {epoch} → saved best_model.pt")
+            # Log metrics each epoch
+            mlflow.log_metrics({
+                "train/total_loss": train_metrics["total_loss"],
+                "train/mse_0": train_metrics["mse_0"],
+                "train/mse_b": train_metrics["mse_b"],
+                "train/mse_f": train_metrics["mse_f"],
+                "train/relative_l2_error": train_l2,
+                "eval/relative_l2_error": eval_l2,
+                # timings
+                "time_forward": train_metrics.get("time_forward", 0.0),
+                "time_backward": train_metrics.get("time_backward", 0.0),
+                "time_step": train_metrics.get("time_step", 0.0),
+                "time_ic": train_metrics.get("time_ic", 0.0),
+                "time_bc": train_metrics.get("time_bc", 0.0),
+                "time_pde": train_metrics.get("time_pde", 0.0),
+                "time_pde_predict": train_metrics.get("time_pde_predict", 0.0),
+                "time_pde_derivatives": train_metrics.get("time_pde_derivatives", 0.0),
+                "time_pde_residual": train_metrics.get("time_pde_residual", 0.0),
+                "time_fetch_icbc": (t_fetch1 - t_fetch0),
+                "time_batches": (t_batches1 - t_batches0),
+                "time_l2_prepare": time_l2_prep,
+                "time_l2_predict": time_l2_pred,
+                "eval_time_l2_prepare": eval_time_l2_prep,
+                "eval_time_l2_predict": eval_time_l2_pred,
+            }, step=epoch)
+            t_ml1 = time.time()
             
             # Compute epoch time
             epoch_time = time.time() - epoch_start
