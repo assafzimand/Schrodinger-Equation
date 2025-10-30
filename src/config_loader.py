@@ -63,6 +63,28 @@ class DatasetConfig:
 
 
 @dataclass
+class SchedulerConfig:
+    """Configuration for learning rate scheduler.
+    
+    Attributes:
+        type: Scheduler type ('reduce_on_plateau', 'step', 'cosine', None)
+        factor: Factor by which learning rate is reduced (for ReduceLROnPlateau)
+        patience: Number of epochs with no improvement after which LR is reduced
+        cooldown: Number of epochs to wait before resuming normal operation
+        min_lr: Minimum learning rate
+        threshold: Threshold for measuring improvement
+        threshold_mode: 'rel' or 'abs'
+    """
+    type: Optional[str] = None
+    factor: float = 0.5
+    patience: int = 100
+    cooldown: int = 50
+    min_lr: float = 1e-7
+    threshold: float = 1e-4
+    threshold_mode: str = "rel"
+
+
+@dataclass
 class TrainConfig:
     """Configuration for model training.
     
@@ -75,7 +97,7 @@ class TrainConfig:
         hidden_neurons: Number of neurons per hidden layer
         activation: Activation function name
         optimizer: Optimizer name ('adam', 'lbfgs', etc.)
-        scheduler: Learning rate scheduler type (optional)
+        scheduler: Learning rate scheduler configuration
         seed: Random seed for reproducibility
         dtype: Data type precision ('float32' or 'float64')
         deterministic: Whether to use deterministic CuDNN
@@ -92,7 +114,7 @@ class TrainConfig:
     hidden_neurons: int = 100
     activation: str = "tanh"
     optimizer: str = "adam"
-    scheduler: Optional[str] = None
+    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     seed: int = 42
     dtype: str = "float32"
     deterministic: bool = False

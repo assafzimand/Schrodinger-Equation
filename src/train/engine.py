@@ -111,22 +111,30 @@ def setup_mlflow(config: Config) -> str:
     run = mlflow.start_run()
 
     # Log configuration
-    mlflow.log_params(
-        {
-            "epochs": config.train.epochs,
-            "learning_rate": config.train.learning_rate,
-            "batch_size": config.train.batch_size,
-            "hidden_layers": config.train.hidden_layers,
-            "hidden_neurons": config.train.hidden_neurons,
-            "activation": config.train.activation,
-            "optimizer": config.train.optimizer,
-            "device": config.train.device,
-            "seed": config.train.seed,
-            "n_collocation": config.dataset.n_collocation,
-            "n_initial": config.dataset.n_initial,
-            "n_boundary": config.dataset.n_boundary,
-        }
-    )
+    params_to_log = {
+        "epochs": config.train.epochs,
+        "learning_rate": config.train.learning_rate,
+        "batch_size": config.train.batch_size,
+        "hidden_layers": config.train.hidden_layers,
+        "hidden_neurons": config.train.hidden_neurons,
+        "activation": config.train.activation,
+        "optimizer": config.train.optimizer,
+        "device": config.train.device,
+        "seed": config.train.seed,
+        "n_collocation": config.dataset.n_collocation,
+        "n_initial": config.dataset.n_initial,
+        "n_boundary": config.dataset.n_boundary,
+    }
+    
+    # Add scheduler parameters if configured
+    if config.train.scheduler.type is not None:
+        params_to_log["scheduler_type"] = config.train.scheduler.type
+        params_to_log["scheduler_factor"] = config.train.scheduler.factor
+        params_to_log["scheduler_patience"] = config.train.scheduler.patience
+        params_to_log["scheduler_cooldown"] = config.train.scheduler.cooldown
+        params_to_log["scheduler_min_lr"] = config.train.scheduler.min_lr
+    
+    mlflow.log_params(params_to_log)
 
     return run.info.run_id
 
@@ -518,6 +526,41 @@ def train(
         lr=config.train.learning_rate,
     )
 
+    # Create learning rate scheduler (if configured)
+    scheduler = None
+    if config.train.scheduler.type == "reduce_on_plateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=config.train.scheduler.factor,
+            patience=config.train.scheduler.patience,
+            cooldown=config.train.scheduler.cooldown,
+            min_lr=config.train.scheduler.min_lr,
+            threshold=config.train.scheduler.threshold,
+            threshold_mode=config.train.scheduler.threshold_mode,
+            verbose=verbose,
+        )
+        if verbose:
+            print(f"\nScheduler: ReduceLROnPlateau (monitor=train_loss, patience={config.train.scheduler.patience})")
+    elif config.train.scheduler.type == "step":
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=config.train.scheduler.patience,
+            gamma=config.train.scheduler.factor,
+            verbose=verbose,
+        )
+        if verbose:
+            print(f"\nScheduler: StepLR (step_size={config.train.scheduler.patience}, gamma={config.train.scheduler.factor})")
+    elif config.train.scheduler.type == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=config.train.epochs,
+            eta_min=config.train.scheduler.min_lr,
+            verbose=verbose,
+        )
+        if verbose:
+            print(f"\nScheduler: CosineAnnealingLR (T_max={config.train.epochs})")
+
     # Create dataloaders
     (
         collocation_loader, 
@@ -611,9 +654,23 @@ def train(
         # Update epoch time metric (log separately to avoid overwriting the dict above)
         mlflow.log_metric("time_epoch", epoch_time, step=epoch)
 
+        # Step the learning rate scheduler (if configured)
+        if scheduler is not None:
+            if config.train.scheduler.type == "reduce_on_plateau":
+                # ReduceLROnPlateau monitors training loss
+                scheduler.step(train_metrics["total_loss"])
+            else:
+                # StepLR and CosineAnnealingLR step automatically
+                scheduler.step()
+            
+            # Log current learning rate
+            current_lr = optimizer.param_groups[0]["lr"]
+            mlflow.log_metric("learning_rate", current_lr, step=epoch)
+
         # Print progress each epoch (include L2)
         if verbose:
             l2_str = f"L²: {eval_metrics['relative_l2_error']:.6f}"
+            lr_str = f"LR: {optimizer.param_groups[0]['lr']:.2e}" if scheduler is not None else ""
             print(
                 f"Epoch {epoch:4d}/{config.train.epochs} | "
                 f"Loss: {train_metrics['total_loss']:.6f} | "
@@ -621,6 +678,7 @@ def train(
                 f"MSE_b: {train_metrics['mse_b']:.6f} | "
                 f"MSE_f: {train_metrics['mse_f']:.6f} | "
                 f"{l2_str} | "
+                f"{lr_str + ' | ' if lr_str else ''}"
                 f"t_fwd={train_metrics.get('time/forward',0.0):.2f}s, "
                 f"t_bwd={train_metrics.get('time/backward',0.0):.2f}s, "
                 f"t_step={train_metrics.get('time/step',0.0):.2f}s | "

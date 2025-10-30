@@ -107,6 +107,41 @@ def train_full_model(
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=config.train.learning_rate)
     
+    # Create learning rate scheduler (if configured)
+    scheduler = None
+    if config.train.scheduler.type is None:
+        print(f"  Scheduler: None (disabled)")
+    elif config.train.scheduler.type == "reduce_on_plateau":
+        print(f"  Setting up ReduceLROnPlateau...")
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=config.train.scheduler.factor,
+            patience=config.train.scheduler.patience,
+            cooldown=config.train.scheduler.cooldown,
+            min_lr=config.train.scheduler.min_lr,
+            threshold=config.train.scheduler.threshold,
+            threshold_mode=config.train.scheduler.threshold_mode,
+            verbose=True,
+        )
+        print(f"  Scheduler: ReduceLROnPlateau (patience={config.train.scheduler.patience}, factor={config.train.scheduler.factor})")
+    elif config.train.scheduler.type == "step":
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=config.train.scheduler.patience,
+            gamma=config.train.scheduler.factor,
+            verbose=True,
+        )
+        print(f"  Scheduler: StepLR (step_size={config.train.scheduler.patience})")
+    elif config.train.scheduler.type == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=config.train.epochs,
+            eta_min=config.train.scheduler.min_lr,
+            verbose=True,
+        )
+        print(f"  Scheduler: CosineAnnealingLR (T_max={config.train.epochs})")
+    
     print(f"  Loss weights: IC={weight_initial}, BC={weight_boundary}, Residual={weight_residual}")
     
     # Create dataloaders (ensure float32 for GPU efficiency)
@@ -151,7 +186,7 @@ def train_full_model(
         print(f"\nMLflow run ID: {run_id}")
         
         # Log parameters
-        mlflow.log_params({
+        log_params = {
             "epochs": config.train.epochs,
             "learning_rate": config.train.learning_rate,
             "batch_size": config.train.batch_size,
@@ -164,7 +199,17 @@ def train_full_model(
             "weight_initial": weight_initial,
             "weight_boundary": weight_boundary,
             "weight_residual": weight_residual,
-        })
+        }
+        
+        # Add scheduler parameters if configured
+        if config.train.scheduler.type is not None:
+            log_params["scheduler_type"] = config.train.scheduler.type
+            log_params["scheduler_factor"] = config.train.scheduler.factor
+            log_params["scheduler_patience"] = config.train.scheduler.patience
+            log_params["scheduler_cooldown"] = config.train.scheduler.cooldown
+            log_params["scheduler_min_lr"] = config.train.scheduler.min_lr
+        
+        mlflow.log_params(log_params)
         
         # Training history
         history = {
@@ -382,6 +427,19 @@ def train_full_model(
             }, step=epoch)
             t_ml1 = time.time()
             
+            # Step the learning rate scheduler (if configured)
+            if scheduler is not None:
+                if config.train.scheduler.type == "reduce_on_plateau":
+                    # ReduceLROnPlateau monitors training loss
+                    scheduler.step(train_metrics["total_loss"])
+                else:
+                    # StepLR and CosineAnnealingLR step automatically
+                    scheduler.step()
+                
+                # Log current learning rate
+                current_lr = optimizer.param_groups[0]["lr"]
+                mlflow.log_metric("learning_rate", current_lr, step=epoch)
+            
             # Compute epoch time
             epoch_time = time.time() - epoch_start
             elapsed_total = time.time() - start_time
@@ -389,10 +447,11 @@ def train_full_model(
             # Print progress (every epoch for short runs, periodically for long runs)
             print_freq = 1 if config.train.epochs <= 50 else max(1, config.train.epochs // 20)
             if epoch % print_freq == 0 or epoch == 1:
+                lr_str = f" | LR: {optimizer.param_groups[0]['lr']:.2e}" if scheduler is not None else ""
                 print(
                     f"Epoch {epoch:4d}/{config.train.epochs} | "
                     f"Loss: {train_metrics['total_loss']:.6f} | "
-                    f"L²: {train_l2:.6f} | "
+                    f"L²: {train_l2:.6f}{lr_str} | "
                     f"t_fwd={train_metrics.get('time_forward',0.0):.2f}s, "
                     f"t_bwd={train_metrics.get('time_backward',0.0):.2f}s, "
                     f"t_step={train_metrics.get('time_step',0.0):.2f}s | "

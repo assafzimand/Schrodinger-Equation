@@ -106,6 +106,9 @@ def run_grid_search():
         print(f"  batch_size={params['batch_size']}")
         if 'learning_rate' in params:
             print(f"  learning_rate={params['learning_rate']}")
+        if 'scheduler_type' in params and params['scheduler_type'] is not None:
+            print(f"  scheduler_type={params['scheduler_type']}")
+            print(f"  scheduler_patience={params.get('scheduler_patience', 100)}")
         print(f"{'=' * 80}")
         
         run_start = datetime.now()
@@ -115,6 +118,18 @@ def run_grid_search():
             config_data['train']['batch_size'] = params['batch_size']
             if 'learning_rate' in params:
                 config_data['train']['learning_rate'] = params['learning_rate']
+            
+            # Update scheduler configuration
+            if 'scheduler' not in config_data['train']:
+                config_data['train']['scheduler'] = {}
+            
+            config_data['train']['scheduler']['type'] = params.get('scheduler_type', None)
+            if params.get('scheduler_type') is not None:
+                config_data['train']['scheduler']['factor'] = params.get('scheduler_factor', 0.5)
+                config_data['train']['scheduler']['patience'] = params.get('scheduler_patience', 100)
+                config_data['train']['scheduler']['cooldown'] = params.get('scheduler_cooldown', 50)
+                config_data['train']['scheduler']['min_lr'] = params.get('scheduler_min_lr', 1e-7)
+            
             with open(temp_config_path, 'w') as f:
                 yaml.dump(config_data, f)
             
@@ -159,6 +174,13 @@ def run_grid_search():
                 # Add learning_rate if present in params
                 if 'learning_rate' in params:
                     result_entry['learning_rate'] = params['learning_rate']
+                
+                # Add scheduler info if present in params
+                if 'scheduler_type' in params:
+                    result_entry['scheduler_type'] = params['scheduler_type']
+                    if params['scheduler_type'] is not None:
+                        result_entry['scheduler_patience'] = params.get('scheduler_patience')
+                        result_entry['scheduler_factor'] = params.get('scheduler_factor')
                 
                 # Add key MLflow parameters for reference (epochs, hidden layers, etc.)
                 result_entry['epochs'] = mlflow_params.get('epochs')
@@ -223,10 +245,14 @@ def run_grid_search():
         print("-" * 80)
         top5 = results_df.dropna(subset=['final_val_loss']).nsmallest(5, 'final_val_loss')
         if len(top5) > 0:
-            # Build column list dynamically to include learning_rate if present
+            # Build column list dynamically to include learning_rate and scheduler_type if present
             display_cols = ['run', 'weight_initial', 'weight_residual', 'batch_size']
             if 'learning_rate' in top5.columns:
                 display_cols.append('learning_rate')
+            if 'scheduler_type' in top5.columns:
+                display_cols.append('scheduler_type')
+                if 'scheduler_patience' in top5.columns:
+                    display_cols.append('scheduler_patience')
             display_cols.extend(['final_val_loss', 'final_val_l2'])
             print(top5[display_cols].to_string(index=False))
         else:

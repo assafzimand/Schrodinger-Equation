@@ -6,7 +6,7 @@ grid_search:
   base_config: config/train.yaml
   
   # Number of epochs for each run
-  epochs: 10000
+  epochs: 3000
   
   # Grid parameters to search
   parameters:
@@ -24,7 +24,20 @@ grid_search:
     batch_size: [512]
     
     # Learning rate (typical range for Adam: 1e-4 to 1e-2)
-    learning_rate: [0.0001]
+    learning_rate: [0.001]
+    
+    # Scheduler type ('reduce_on_plateau', 'step', 'cosine', or null for no scheduler)
+    scheduler_type: [null, reduce_on_plateau]
+    
+    # Scheduler parameters (only used if scheduler_type is not null)
+    # factor: how much to reduce LR (0.5 = half, 0.3 = more aggressive)
+    scheduler_factor: [0.5]
+    # patience: epochs to wait before reducing (balance between stability and responsiveness)
+    scheduler_patience: [100, 200, 50]
+    # cooldown: epochs to wait after reduction before resuming monitoring
+    scheduler_cooldown: [50, 100]
+    # min_lr: don't reduce below this (keep some learning capacity)
+    scheduler_min_lr: [1e-7]
   
   # MLflow experiment name for grid search
   experiment_name: schrodinger_grid_search

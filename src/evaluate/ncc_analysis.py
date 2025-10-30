@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import json
 import mlflow
+from matplotlib import pyplot as plt
 from typing import Dict, List, Optional
 from pathlib import Path
 from sklearn.metrics import confusion_matrix
@@ -301,7 +302,7 @@ def main():
     parser.add_argument("--run_id", type=str, required=True, help="MLflow run ID to analyze")
     parser.add_argument("--dataset", type=str, default="data/processed/dataset.npz",
                         help="Path to dataset .npz file")
-    parser.add_argument("--bins", type=int, default=20, help="Number of bins for amplitude classes")
+    parser.add_argument("--bins", type=int, default=15, help="Number of bins for amplitude classes")
     parser.add_argument("--u_range", type=float, nargs=2, default=[-5.0, 5.0],
                         help="u range for binning")
     parser.add_argument("--v_range", type=float, nargs=2, default=[-5.0, 5.0],
@@ -318,7 +319,7 @@ def main():
     layers_to_eval = ["layer_1", "layer_2", "layer_3", "layer_4", "layer_5"]
     batch_size = args.batch_size
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+
     run_id = args.run_id
     dataset_path = args.dataset
     output_dir = Path("outputs") / "plots" / f"ncc_{run_id}"
@@ -330,7 +331,7 @@ def main():
     print(f"Run ID: {run_id}")
     print(f"Dataset: {dataset_path}")
     print(f"Device: {device}")
-    print(f"Bins: {bins}, Amplitude range: {amp_range}")
+    print(f"Bins: {bins}, U range: {u_range}, V range: {v_range}")
     print(f"Output directory: {output_dir}")
     print("=" * 80 + "\n")
 
@@ -344,7 +345,8 @@ def main():
     x, t = data["x_f"], data["t_f"]
     
     print("\nStep 3: Creating class labels...")
-    labels_true = make_class_labels_from_solver(data, bins, amp_range)
+    labels_true = make_class_labels_from_solver(data, bins, u_range, v_range)
+    print(f"  Bins per axis: {bins} → total classes = {num_classes}")
     print(f"  Labels shape: {labels_true.shape}")
     print(f"  Unique classes: {len(np.unique(labels_true))}")
 
@@ -358,9 +360,9 @@ def main():
     confusions, dists = [], []
     for ln in layers_to_eval:
         emb = activations[ln]
-        result = ncc_mismatch_rate(emb, labels_true, bins)
+        result = ncc_mismatch_rate(emb, labels_true, num_classes)
         mismatch_rates.append(result["mismatch_rate"])
-        confusions.append(confusion_matrix(labels_true, result["assigned"], labels=range(bins)))
+        confusions.append(confusion_matrix(labels_true, result["assigned"], labels=range(num_classes)))
         dists.append(result["distances"])
         print(f"  {ln}: mismatch_rate={result['mismatch_rate']:.4f}")
 
@@ -383,7 +385,29 @@ def main():
     print("\n" + "=" * 80)
     print(f"✓ NCC analysis complete! Results saved to {output_dir}")
     print("=" * 80)
+    
+# Collect debug metrics across layers
+    debug_stats = [r["debug"] for r in results] if "results" in locals() else []
+
+    if debug_stats:
+        fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+        names = layers_to_eval
+        def extract(key): return [d[key] for d in debug_stats]
+
+        axes[0,0].plot(names, extract("center_norm_mean"), marker='o'); axes[0,0].set_title("Center Norm Mean")
+        axes[0,1].plot(names, extract("center_dist_mean"), marker='o'); axes[0,1].set_title("Center–Center Dist Mean")
+        axes[1,0].plot(names, extract("intra_mean"), marker='o', label="intra"); 
+        axes[1,0].plot(names, extract("inter_mean"), marker='o', label="inter"); 
+        axes[1,0].legend(); axes[1,0].set_title("Intra vs Inter Mean Distances")
+        axes[1,1].bar(names, mismatch_rates, color="skyblue"); axes[1,1].set_title("Mismatch Rate")
+        plt.tight_layout()
+        debug_fig = output_dir / "ncc_debug_summary.png"
+        plt.savefig(debug_fig, dpi=150)
+        plt.close(fig)
+        print(f"  ✓ Debug summary plot saved to {debug_fig}")
+
 
 
 if __name__ == "__main__":
     main()
+

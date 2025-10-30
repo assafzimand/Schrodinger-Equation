@@ -1,0 +1,22 @@
+{
+  "run_id": "e5c6f547354f4da5957b3758edb21ca1",
+  "experiment": "schrodinger_step1",
+  "timestamp": "2025-10-30T17:41:20.893122",
+  "parameters": {
+    "epochs": 50,
+    "learning_rate": 0.001,
+    "batch_size": 1024,
+    "hidden_layers": 5,
+    "hidden_neurons": 100,
+    "activation": "tanh",
+    "weight_initial": 1.0,
+    "weight_boundary": 1.0,
+    "weight_residual": 1.0,
+    "seed": 42
+  },
+  "final_metrics": {
+    "train_loss": 0.06343113537877798,
+    "train_l2_error": 1.0998247861862183,
+    "eval_l2_error": 1.0921502113342285
+  }
+}

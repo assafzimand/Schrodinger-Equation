@@ -4,8 +4,8 @@
 train:
   # Training hyperparameters
   epochs: 1000
-  learning_rate: 0.001
-  batch_size: 1024
+  learning_rate: 0.0001
+  batch_size: 512
   
   # Hardware settings
   device: auto  # Options: 'auto', 'cuda', 'cpu'
@@ -17,7 +17,16 @@ train:
   
   # Optimizer settings
   optimizer: adam
-  scheduler: null  # Optional: 'step', 'exponential', 'cosine', etc.
+  
+  # Learning rate scheduler (optional)
+  scheduler:
+    type: null  # Options: 'reduce_on_plateau', 'step', 'cosine', or null for no scheduler
+    factor: 0.5  # Factor by which learning rate is reduced (for ReduceLROnPlateau)
+    patience: 100  # Number of epochs with no improvement before reducing LR
+    cooldown: 50  # Number of epochs to wait before resuming normal operation
+    min_lr: 1.0e-7  # Minimum learning rate
+    threshold: 1.0e-4  # Threshold for measuring improvement
+    threshold_mode: rel  # 'rel' or 'abs'
   
   # Reproducibility
   seed: 42
