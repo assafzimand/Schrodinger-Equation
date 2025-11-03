@@ -17,6 +17,7 @@ from src.utils.ncc_plotting import (
     plot_ncc_results,
     plot_all_layer_confusions,
     plot_all_layer_dists,
+    plot_layer_structure_evolution
 )
 from src.model.schrodinger_model import SchrodingerNet
 
@@ -358,12 +359,20 @@ def main():
     print("\nStep 5: Computing NCC metrics...")
     mismatch_rates = []
     confusions, dists = [], []
+    debug_stats = []  # collect layer diagnostics
     for ln in layers_to_eval:
         emb = activations[ln]
-        result = ncc_mismatch_rate(emb, labels_true, num_classes)
+        result = ncc_mismatch_rate(
+            emb,
+            labels_true,
+            num_classes,
+            layer_name=ln,
+            save_debug_dir=output_dir / "debug_stats"
+        )
         mismatch_rates.append(result["mismatch_rate"])
         confusions.append(confusion_matrix(labels_true, result["assigned"], labels=range(num_classes)))
         dists.append(result["distances"])
+        debug_stats.append(result["debug"]) 
         print(f"  {ln}: mismatch_rate={result['mismatch_rate']:.4f}")
 
     # ---- SAVE METRICS + PLOTS ----
@@ -386,26 +395,10 @@ def main():
     print(f"✓ NCC analysis complete! Results saved to {output_dir}")
     print("=" * 80)
     
-# Collect debug metrics across layers
+    # Collect debug metrics across layers
     debug_stats = [r["debug"] for r in results] if "results" in locals() else []
-
-    if debug_stats:
-        fig, axes = plt.subplots(2, 2, figsize=(10, 8))
-        names = layers_to_eval
-        def extract(key): return [d[key] for d in debug_stats]
-
-        axes[0,0].plot(names, extract("center_norm_mean"), marker='o'); axes[0,0].set_title("Center Norm Mean")
-        axes[0,1].plot(names, extract("center_dist_mean"), marker='o'); axes[0,1].set_title("Center–Center Dist Mean")
-        axes[1,0].plot(names, extract("intra_mean"), marker='o', label="intra"); 
-        axes[1,0].plot(names, extract("inter_mean"), marker='o', label="inter"); 
-        axes[1,0].legend(); axes[1,0].set_title("Intra vs Inter Mean Distances")
-        axes[1,1].bar(names, mismatch_rates, color="skyblue"); axes[1,1].set_title("Mismatch Rate")
-        plt.tight_layout()
-        debug_fig = output_dir / "ncc_debug_summary.png"
-        plt.savefig(debug_fig, dpi=150)
-        plt.close(fig)
-        print(f"  ✓ Debug summary plot saved to {debug_fig}")
-
+    plot_layer_structure_evolution(debug_stats, layers_to_eval, mismatch_rates,
+                               output_dir / "ncc_layer_structure_evolution.png")
 
 
 if __name__ == "__main__":

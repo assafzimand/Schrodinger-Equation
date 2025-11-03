@@ -1,0 +1,2 @@
+run,run_id,weight_initial,weight_boundary,weight_residual,batch_size,final_train_loss,final_val_loss,final_train_l2,final_val_l2,duration_minutes,timestamp,learning_rate,epochs,hidden_layers,hidden_neurons,activation
+1,cd183fa63d114666b165596dc876df73,1,1,1,512,0.00035439302300801503,,0.04026768356561661,,271.9165075833333,2025-10-30T15:27:22.994965,0.0001,10000,5,100,tanh

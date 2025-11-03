@@ -31,7 +31,6 @@ def assign_to_nearest_center_torch(embeddings: torch.Tensor, centers: torch.Tens
     dist_vals = dists[torch.arange(len(embeddings), device=embeddings.device), idx]
     return assigned, dist_vals
 
-
 def ncc_mismatch_rate(
     embeddings: np.ndarray,
     labels_true: np.ndarray,
@@ -53,8 +52,9 @@ def ncc_mismatch_rate(
     # --- Debug statistics ----------------------------------------------------
     # 1. Norms of class centers
     center_norms = torch.norm(centers, dim=1)
-    center_norm_mean = torch.nanmean(center_norms).item()
-    center_norm_std = torch.nanstd(center_norms).item()
+    valid_norms = center_norms[~torch.isnan(center_norms)]
+    center_norm_mean = valid_norms.mean().item() if valid_norms.numel() > 0 else float("nan")
+    center_norm_std = valid_norms.std().item() if valid_norms.numel() > 1 else float("nan")
 
     # 2. Pairwise distances between centers
     valid = ~torch.isnan(centers).any(dim=1)
@@ -65,6 +65,7 @@ def ncc_mismatch_rate(
         center_dist_mean = upper.mean().item()
         center_dist_std = upper.std().item()
     else:
+        upper = torch.tensor([], device=device)
         center_dist_mean = float("nan")
         center_dist_std = float("nan")
 
@@ -81,10 +82,13 @@ def ncc_mismatch_rate(
         if others.shape[0] > 0:
             d_inter = torch.norm(others - centers[k], dim=1)
             inter_dists.append(d_inter.mean().item())
-    intra_mean = np.nanmean(intra_dists) if len(intra_dists) else np.nan
-    inter_mean = np.nanmean(inter_dists) if len(inter_dists) else np.nan
-    intra_std = np.nanstd(intra_dists) if len(intra_dists) else np.nan
-    inter_std = np.nanstd(inter_dists) if len(inter_dists) else np.nan
+
+    intra_dists = np.array(intra_dists)
+    inter_dists = np.array(inter_dists)
+    intra_mean = np.nanmean(intra_dists) if intra_dists.size else np.nan
+    inter_mean = np.nanmean(inter_dists) if inter_dists.size else np.nan
+    intra_std = np.nanstd(intra_dists) if intra_dists.size else np.nan
+    inter_std = np.nanstd(inter_dists) if inter_dists.size else np.nan
 
     print(f"\n[DEBUG] Layer {layer_name}:")
     print(f"  Center norms:     mean={center_norm_mean:.4f}, std={center_norm_std:.4f}")
@@ -92,22 +96,34 @@ def ncc_mismatch_rate(
     print(f"  Intra-class dist: mean={intra_mean:.4f}, std={intra_std:.4f}")
     print(f"  Inter-class dist: mean={inter_mean:.4f}, std={inter_std:.4f}")
 
-    # Optionally save debug plots
+    # --- Debug plot generation ----------------------------------------------
     if save_debug_dir:
+        import os
+        os.makedirs(save_debug_dir, exist_ok=True)
         try:
-            import os
-            os.makedirs(save_debug_dir, exist_ok=True)
             fig, ax = plt.subplots(2, 2, figsize=(10, 8))
             ax = ax.ravel()
-            ax[0].hist(center_norms.cpu().numpy(), bins=40, color="steelblue", alpha=0.7)
+            ax[0].hist(valid_norms.cpu().numpy(), bins=40, color="steelblue", alpha=0.7)
             ax[0].set_title(f"{layer_name} - Center Norms")
-            if centers_valid.shape[0] > 1:
+
+            if upper.numel() > 0:
                 ax[1].hist(upper.cpu().numpy(), bins=40, color="darkorange", alpha=0.7)
                 ax[1].set_title(f"{layer_name} - Center-to-Center Distances")
-            ax[2].hist(intra_dists, bins=40, color="seagreen", alpha=0.7)
+            else:
+                ax[1].text(0.5, 0.5, "No valid pairs", ha="center")
+
+            if intra_dists.size > 0:
+                ax[2].hist(intra_dists, bins=40, color="seagreen", alpha=0.7)
+            else:
+                ax[2].text(0.5, 0.5, "Empty", ha="center")
             ax[2].set_title(f"{layer_name} - Intra-class Distances")
-            ax[3].hist(inter_dists, bins=40, color="crimson", alpha=0.7)
+
+            if inter_dists.size > 0:
+                ax[3].hist(inter_dists, bins=40, color="crimson", alpha=0.7)
+            else:
+                ax[3].text(0.5, 0.5, "Empty", ha="center")
             ax[3].set_title(f"{layer_name} - Inter-class Distances")
+
             plt.tight_layout()
             fig.savefig(f"{save_debug_dir}/debug_stats_{layer_name}.png", dpi=150)
             plt.close(fig)
