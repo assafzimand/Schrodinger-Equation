@@ -6,7 +6,7 @@ grid_search:
   base_config: config/train.yaml
   
   # Number of epochs for each run
-  epochs: 3000
+  epochs: 20000
   
   # Grid parameters to search
   parameters:
@@ -18,7 +18,7 @@ grid_search:
     weight_boundary: [1]
     
     # PDE residual weight (try boosting to improve time evolution)
-    weight_residual: [1]
+    weight_residual: [10]
     
     # Batch size (affects gradient noise and convergence)
     batch_size: [512]

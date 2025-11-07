@@ -85,3 +85,14 @@ black==25.9.0          # Code formatter (optional, for development)
 # - Disk: ~2GB for environment + data
 # ============================================================================
 
+# ============================================================================
+# RFWFC (Random Forest Wavelet / Deep Layer Smoothness) Dependencies
+# ============================================================================
+tqdm==4.66.5               # progress bars
+umap-learn==0.5.6          # dimensionality reduction (used for visualizations)
+scikit-learn==1.5.2        # random forests, clustering, metrics
+networkx==3.3              # tree graph utilities used in wavelet decomposition
+numba==0.59.1              # optional for speedups in UMAP / clustering
+pandas==2.2.3              # data I/O for results
+opencv-python>=4.8
+
