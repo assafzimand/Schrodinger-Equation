@@ -6,13 +6,13 @@ grid_search:
   base_config: config/train.yaml
   
   # Number of epochs for each run
-  epochs: 1500
+  epochs: 1000
   
   # Grid parameters to search
   parameters:
     # Initial condition loss weight
     # Based on analysis: 1.0 (paper), 10, 20 (moderate boost)
-    weight_initial: [1,10,100]
+    weight_initial: [1,10]
     
     # Boundary condition weight (keep constant)
     weight_boundary: [1,10]
