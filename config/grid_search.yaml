@@ -6,25 +6,25 @@ grid_search:
   base_config: config/train.yaml
   
   # Number of epochs for each run
-  epochs: 20000
+  epochs: 15000
   
   # Grid parameters to search
   parameters:
     # Initial condition loss weight
     # Based on analysis: 1.0 (paper), 10, 20 (moderate boost)
-    weight_initial: [1]
+    weight_initial: [100]
     
     # Boundary condition weight (keep constant)
     weight_boundary: [1]
     
     # PDE residual weight (try boosting to improve time evolution)
-    weight_residual: [10]
+    weight_residual: [100]
     
     # Batch size (affects gradient noise and convergence)
     batch_size: [512]
     
     # Learning rate (typical range for Adam: 1e-4 to 1e-2)
-    learning_rate: [0.001]
+    learning_rate: [0.0001]
     
     # Scheduler type ('reduce_on_plateau', 'step', 'cosine', or null for no scheduler)
     scheduler_type: [null, reduce_on_plateau]
