@@ -12,13 +12,13 @@ grid_search:
   parameters:
     # Initial condition loss weight
     # Based on analysis: 1.0 (paper), 10, 20 (moderate boost)
-    weight_initial: [1,10]
+    weight_initial: [1,5,10]
     
     # Boundary condition weight (keep constant)
-    weight_boundary: [1,10]
+    weight_boundary: [1]
     
     # PDE residual weight (try boosting to improve time evolution)
-    weight_residual: [1,10,100]
+    weight_residual: [1,10,20]
     
     # Batch size (affects gradient noise and convergence)
     batch_size: [512]

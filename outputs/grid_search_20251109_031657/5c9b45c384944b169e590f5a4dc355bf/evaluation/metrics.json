@@ -1,0 +1,17 @@
+{
+  "relative_l2_error": 0.8881639842968971,
+  "max_abs_error": 4.3914027990586915,
+  "mean_abs_error": 0.49357510604575694,
+  "std_abs_error": 0.622410232606776,
+  "max_relative_error": 11.264749945761265,
+  "mean_relative_error": 1.9678639562807014,
+  "max_error_time": 1.5708,
+  "pred_norm": 61.4368701516616,
+  "true_norm": 143.1018502945854,
+  "optimal_phase_rad": -0.269404310631293,
+  "time_load_model": 0.11103200912475586,
+  "time_solver": 0.007111549377441406,
+  "time_predict_grid": 0.15996646881103516,
+  "time_compute_metrics": 0.0025310516357421875,
+  "time/plots": 3.8375778198242188
+}
