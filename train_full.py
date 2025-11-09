@@ -382,8 +382,8 @@ def train_full_model(
             if eval_dataset is not None:
                 eval_l2, eval_time_l2_prep, eval_time_l2_pred = compute_l2(eval_coll_loader)
                 history["eval/relative_l2_error"].append(eval_l2)
-                # Update best checkpoint each epoch using eval L2
-                if eval_l2 < best_metric:
+                # Update best checkpoint every 100 epochs (and at the final epoch) using eval L2
+                if (epoch % 100 == 0 or epoch == config.train.epochs) and eval_l2 < best_metric:
                     best_metric = eval_l2
                     best_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
                     torch.save({

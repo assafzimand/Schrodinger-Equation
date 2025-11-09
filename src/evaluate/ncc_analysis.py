@@ -3,6 +3,10 @@ NCC analysis for the Schrödinger PINN model.
 
 Evaluates hidden-layer smoothness using the Nearest Class Center (NCC) metric.
 """
+import sys, os, pathlib
+PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import numpy as np
 import torch
@@ -12,12 +16,14 @@ from matplotlib import pyplot as plt
 from typing import Dict, List, Optional
 from pathlib import Path
 from sklearn.metrics import confusion_matrix
-from src.utils.ncc import ncc_mismatch_rate
+from src.utils.ncc import ncc_mismatch_rate, linear_probe_accuracy_torch, fisher_ratio, center_margin_stats
 from src.utils.ncc_plotting import (
     plot_ncc_results,
     plot_all_layer_confusions,
     plot_all_layer_dists,
-    plot_layer_structure_evolution
+    plot_layer_structure_evolution,
+    plot_layer_geometry,
+    plot_linear_separability_summary
 )
 from src.model.schrodinger_model import SchrodingerNet
 
@@ -204,8 +210,8 @@ def load_dataset_npz(path: str) -> Dict[str, np.ndarray]:
 
 
 def make_class_labels_from_solver(data: Dict[str, np.ndarray], bins: int,
-                                  u_range: List[float] = [-5.0, 5.0],
-                                  v_range: List[float] = [-5.0, 5.0]) -> np.ndarray:
+                                  u_range: List[float] = None,
+                                  v_range: List[float] = None) -> np.ndarray:
     """Compute ground-truth 2D (u,v)-based class labels.
 
     The (u,v) domain is divided into a bins×bins grid.
@@ -220,6 +226,11 @@ def make_class_labels_from_solver(data: Dict[str, np.ndarray], bins: int,
     Returns:
         labels: (N,) numpy array of class indices in [0, bins**2 - 1]
     """
+    if u_range is None:
+        u_range = [np.percentile(data["u_f"], 1), np.percentile(data["u_f"], 99)]
+    if v_range is None:
+        v_range = [np.percentile(data["v_f"], 1), np.percentile(data["v_f"], 99)]
+
     u = np.clip(data["u_f"], u_range[0], u_range[1])
     v = np.clip(data["v_f"], v_range[0], v_range[1])
 
@@ -303,10 +314,10 @@ def main():
     parser.add_argument("--run_id", type=str, required=True, help="MLflow run ID to analyze")
     parser.add_argument("--dataset", type=str, default="data/processed/dataset.npz",
                         help="Path to dataset .npz file")
-    parser.add_argument("--bins", type=int, default=15, help="Number of bins for amplitude classes")
-    parser.add_argument("--u_range", type=float, nargs=2, default=[-5.0, 5.0],
+    parser.add_argument("--bins", type=int, default=2, help="Number of bins for amplitude classes")
+    parser.add_argument("--u_range", type=float, nargs=2, default=None,
                         help="u range for binning")
-    parser.add_argument("--v_range", type=float, nargs=2, default=[-5.0, 5.0],
+    parser.add_argument("--v_range", type=float, nargs=2, default=None,
                         help="v range for binning")
     parser.add_argument("--batch_size", type=int, default=1024, help="Batch size for forward passes")
     
@@ -360,6 +371,8 @@ def main():
     mismatch_rates = []
     confusions, dists = [], []
     debug_stats = []  # collect layer diagnostics
+    linear_probe_accs, fisher_ratios = [], []
+    pos_margin_fracs, own_center_means, other_center_means = [], [], []
     for ln in layers_to_eval:
         emb = activations[ln]
         result = ncc_mismatch_rate(
@@ -373,6 +386,20 @@ def main():
         confusions.append(confusion_matrix(labels_true, result["assigned"], labels=range(num_classes)))
         dists.append(result["distances"])
         debug_stats.append(result["debug"]) 
+        # --- NEW: linear separability & margin metrics per layer ---
+        probe_acc = linear_probe_accuracy_torch(
+            emb, labels_true, num_classes, device=("cuda" if torch.cuda.is_available() else "cpu"),
+            epochs=20, lr=1e-2, weight_decay=0.0
+        )
+        fisher = fisher_ratio(emb, labels_true, num_classes)
+        mstats = center_margin_stats(emb, labels_true, result["centers"])
+
+        linear_probe_accs.append(probe_acc)
+        fisher_ratios.append(fisher)
+        pos_margin_fracs.append(mstats["pos_margin_frac"])
+        own_center_means.append(mstats["own_dist_mean"])
+        other_center_means.append(mstats["other_min_mean"])
+
         print(f"  {ln}: mismatch_rate={result['mismatch_rate']:.4f}")
 
     # ---- SAVE METRICS + PLOTS ----
@@ -396,9 +423,21 @@ def main():
     print("=" * 80)
     
     # Collect debug metrics across layers
-    debug_stats = [r["debug"] for r in results] if "results" in locals() else []
     plot_layer_structure_evolution(debug_stats, layers_to_eval, mismatch_rates,
                                output_dir / "ncc_layer_structure_evolution.png")
+    plot_layer_geometry(debug_stats, layers_to_eval, output_dir / "ncc_layer_geometry_evolution.png")
+    plot_linear_separability_summary(
+        layer_names=layers_to_eval,
+        probe_acc=linear_probe_accs,
+        fisher=fisher_ratios,
+        pos_margin_frac=pos_margin_fracs,
+        own_mean=own_center_means,
+        other_mean=other_center_means,
+        save_path=os.path.join(output_dir, "ncc_linear_separability.png"),
+    )
+    print(f"  ✓ Saved linear separability summary → {os.path.join(output_dir, 'ncc_linear_separability.png')}")
+
+
 
 
 if __name__ == "__main__":

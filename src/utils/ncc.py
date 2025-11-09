@@ -151,3 +151,134 @@ def ncc_mismatch_rate(
             "inter_std": inter_std,
         },
     }
+
+# --- Linear separability & compactness helpers --------------------------------
+import math
+from typing import Dict, Tuple
+
+def _stratified_split_idx(y: np.ndarray, val_frac: float = 0.2, seed: int = 42) -> Tuple[np.ndarray, np.ndarray]:
+    """Return train_idx, val_idx with simple stratified split."""
+    rng = np.random.default_rng(seed)
+    y = np.asarray(y)
+    train_idx, val_idx = [], []
+    for c in np.unique(y):
+        idx = np.where(y == c)[0]
+        rng.shuffle(idx)
+        k = max(1, int(len(idx) * val_frac))
+        val_idx.append(idx[:k])
+        train_idx.append(idx[k:])
+    return np.concatenate(train_idx), np.concatenate(val_idx)
+
+def linear_probe_accuracy_torch(
+    embeddings: np.ndarray,
+    labels_true: np.ndarray,
+    num_classes: int,
+    device: str = "cuda",
+    epochs: int = 20,
+    lr: float = 1e-2,
+    weight_decay: float = 0.0,
+) -> float:
+    """
+    Train a tiny linear classifier on frozen embeddings and return val accuracy.
+    (Multinomial logistic regression; no external deps.)
+    """
+    x = torch.from_numpy(embeddings).float()
+    y = torch.from_numpy(labels_true).long()
+    train_idx, val_idx = _stratified_split_idx(labels_true, val_frac=0.2, seed=42)
+    x_tr, y_tr = x[train_idx], y[train_idx]
+    x_va, y_va = x[val_idx], y[val_idx]
+
+    model = torch.nn.Linear(x.shape[1], num_classes)
+    model.to(device)
+    x_tr = x_tr.to(device); y_tr = y_tr.to(device)
+    x_va = x_va.to(device); y_va = y_va.to(device)
+
+    opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    ce = torch.nn.CrossEntropyLoss()
+    model.train()
+    for _ in range(epochs):
+        opt.zero_grad()
+        logits = model(x_tr)
+        loss = ce(logits, y_tr)
+        loss.backward()
+        opt.step()
+    model.eval()
+    with torch.no_grad():
+        acc = (model(x_va).argmax(dim=1) == y_va).float().mean().item()
+    return float(acc)
+
+def fisher_ratio(
+    embeddings: np.ndarray,
+    labels_true: np.ndarray,
+    num_classes: int,
+) -> float:
+    """
+    Fisher ratio = trace(S_between) / trace(S_within)
+    Higher is better (large between-class, small within-class).
+    """
+    x = torch.from_numpy(embeddings).float()
+    y = torch.from_numpy(labels_true).long()
+    C = num_classes
+
+    # class means and counts
+    means, Ns = [], []
+    for c in range(C):
+        mask = (y == c)
+        if mask.any():
+            xc = x[mask]
+            means.append(xc.mean(dim=0, keepdim=True))
+            Ns.append(xc.shape[0])
+        else:
+            means.append(torch.zeros((1, x.shape[1]), dtype=x.dtype))
+            Ns.append(0)
+    M = torch.cat(means, dim=0)  # (C, D)
+    N = torch.tensor(Ns, dtype=torch.float32).unsqueeze(1)  # (C, 1)
+
+    # Weighted global mean
+    total = N.sum().clamp_min(1.0)
+    mu = (M * N).sum(dim=0, keepdim=True) / total  # (1, D)
+
+    # Within-class scatter (average squared distance to own mean)
+    Sw = torch.tensor(0.0)
+    for c in range(C):
+        mask = (y == c)
+        if mask.any():
+            xc = x[mask] - M[c]
+            Sw += (xc.pow(2).sum() / max(1, xc.shape[0]))
+
+    # Between-class scatter (weighted distance of means to global mean)
+    Sb = ((M - mu).pow(2).sum(dim=1) * N.squeeze(1)).sum() / total
+
+    return float((Sb + 1e-12) / (Sw + 1e-12))
+
+
+def center_margin_stats(
+    embeddings: np.ndarray,
+    labels_true: np.ndarray,
+    centers: np.ndarray
+) -> Dict[str, float]:
+    """
+    For each sample: margin = (nearest-other-center distance) - (own-center distance).
+    Return mean margin and the fraction with positive margin.
+    """
+    x = torch.from_numpy(embeddings).float()
+    y = torch.from_numpy(labels_true).long()
+    C = centers.shape[0]
+    cen = torch.from_numpy(centers).float()
+    # distances to all centers
+    # x: (N, D), cen: (C, D) -> dists: (N, C)
+    dists = torch.cdist(x, cen, p=2)
+    own = dists[torch.arange(x.shape[0]), y]
+    # mask out own center and take min of others
+    inf = torch.full_like(dists, float('inf'))
+    d_others = torch.where(
+        torch.nn.functional.one_hot(y, num_classes=C).bool(),
+        inf, dists
+    ).min(dim=1).values
+    margin = d_others - own
+    return {
+        "mean_margin": float(margin.mean().item()),
+        "pos_margin_frac": float((margin > 0).float().mean().item()),
+        "own_dist_mean": float(own.mean().item()),
+        "other_min_mean": float(d_others.mean().item()),
+    }

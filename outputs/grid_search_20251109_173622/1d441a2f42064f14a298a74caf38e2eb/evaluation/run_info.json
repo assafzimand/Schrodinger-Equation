@@ -1,0 +1,22 @@
+{
+  "run_id": "1d441a2f42064f14a298a74caf38e2eb",
+  "experiment": "schrodinger_grid_search",
+  "timestamp": "2025-11-09T15:18:24.520007",
+  "parameters": {
+    "epochs": 1000,
+    "learning_rate": 0.0001,
+    "batch_size": 512,
+    "hidden_layers": 5,
+    "hidden_neurons": 100,
+    "activation": "tanh",
+    "weight_initial": 5,
+    "weight_boundary": 1,
+    "weight_residual": 1,
+    "seed": 42
+  },
+  "final_metrics": {
+    "train_loss": 0.004338206816464662,
+    "train_l2_error": 0.3243756592273712,
+    "eval_l2_error": 0.31033405661582947
+  }
+}
