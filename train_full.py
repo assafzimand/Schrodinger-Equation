@@ -254,7 +254,9 @@ def train_full_model(
             if checkpoint_path is not None:
                 print(f"\nLoading pretrained checkpoint: {checkpoint_path}")
                 checkpoint = torch.load(
-                    checkpoint_path, map_location=device
+                    checkpoint_path,
+                    map_location=device,
+                    weights_only=False
                 )
 
                 # Load model state
