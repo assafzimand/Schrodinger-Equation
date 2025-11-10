@@ -40,5 +40,5 @@ train:
   # Pretrained model loading (optional)
   # Uncomment and set one of these to load a pretrained checkpoint:
   # pretrained_run_id: null  # MLflow run ID (e.g., "abc123def456")
-  pretrained_checkpoint: "outputs/grid_search_20251110_094116/mlruns/228991845337437334/artifacts/best_model.pt"  # Direct path to checkpoint (e.g., "outputs/checkpoints/best_model.pt")
+  pretrained_checkpoint: "outputs/grid_search_20251110_094116/mlruns/6f183297908646e085d23128ffa5c684/checkpoints/best_model.pt"  # Direct path to checkpoint (e.g., "outputs/checkpoints/best_model.pt")
   resume_training: false  # If true, resume from checkpoint epoch; if false, start from epoch 1
