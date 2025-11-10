@@ -36,4 +36,10 @@ train:
   # Experiment tracking
   mlflow_experiment: schrodinger_step1
   checkpoint_dir: outputs/checkpoints
+  
+  # Pretrained model loading (optional)
+  # Uncomment and set one of these to load a pretrained checkpoint:
+  # pretrained_run_id: null  # MLflow run ID (e.g., "abc123def456")
+  pretrained_checkpoint: "outputs/grid_search_20251110_030335/c23c8539bfe5412187ac2ad793b62172/checkpoints/best_model.pt"  # Direct path to checkpoint (e.g., "outputs/checkpoints/best_model.pt")
+  resume_training: false  # If true, resume from checkpoint epoch; if false, start from epoch 1
 

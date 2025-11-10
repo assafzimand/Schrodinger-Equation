@@ -1,0 +1,46 @@
+# Example Configuration for Fine-tuning from a Pretrained Model
+# This starts from epoch 1 but with pretrained weights
+# Useful for transfer learning or fine-tuning with different hyperparameters
+
+train:
+  # Training hyperparameters
+  epochs: 1000  # Total epochs for fine-tuning
+  learning_rate: 0.00001  # Lower LR for fine-tuning
+  batch_size: 512
+  
+  # Hardware settings
+  device: auto  # Options: 'auto', 'cuda', 'cpu'
+  
+  # Model architecture (must match pretrained model)
+  hidden_layers: 5
+  hidden_neurons: 100
+  activation: tanh
+  
+  # Optimizer settings
+  optimizer: adam
+  
+  # Learning rate scheduler (optional)
+  scheduler:
+    type: reduce_on_plateau  # Use scheduler for fine-tuning
+    factor: 0.5
+    patience: 50  # More aggressive for fine-tuning
+    cooldown: 25
+    min_lr: 1.0e-8
+    threshold: 1.0e-5
+    threshold_mode: rel
+  
+  # Reproducibility
+  seed: 42
+  dtype: float32
+  deterministic: false
+  
+  # Experiment tracking
+  mlflow_experiment: schrodinger_finetune
+  checkpoint_dir: outputs/checkpoints_finetune
+  
+  # Pretrained model loading
+  pretrained_checkpoint: "outputs/checkpoints/best_model.pt"
+  
+  # Start fresh training from pretrained weights (don't resume from epoch)
+  resume_training: false
+

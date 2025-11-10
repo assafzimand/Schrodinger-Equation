@@ -31,6 +31,139 @@ from src.solver.nlse_solver import solve_nlse_full_grid
 from src.utils.plotting import plot_solution_heatmap
 
 
+def resolve_checkpoint_path(
+    run_id: str = None,
+    checkpoint_path: str = None,
+    mlruns_path: str = "./mlruns"
+) -> Path:
+    """Resolve checkpoint path from MLflow run ID or direct path.
+
+    This function follows the same logic as load_model_from_mlflow in
+    ncc_analysis.py to ensure consistent checkpoint resolution.
+
+    Args:
+        run_id: MLflow run ID to find checkpoint from
+        checkpoint_path: Direct path to checkpoint file
+        mlruns_path: Path to MLflow tracking directory
+
+    Returns:
+        Path to checkpoint file
+
+    Raises:
+        FileNotFoundError: If checkpoint cannot be found
+    """
+    if checkpoint_path is not None:
+        # Direct path provided
+        path = Path(checkpoint_path)
+        if not path.exists():
+            msg = f"Checkpoint not found: {checkpoint_path}"
+            raise FileNotFoundError(msg)
+        return path
+
+    if run_id is not None:
+        import re
+        import tempfile
+        import os
+
+        # Try to load from MLflow artifacts first
+        mlflow.set_tracking_uri(f"file:{mlruns_path}")
+        client = mlflow.tracking.MlflowClient()
+
+        try:
+            run = client.get_run(run_id)
+            candidate_paths = []
+
+            # 1) Root artifacts
+            try:
+                root_artifacts = client.list_artifacts(run_id, path="")
+                for art in root_artifacts:
+                    candidate_paths.append(art.path)
+            except Exception:
+                pass
+
+            # 2) 'checkpoints/' subdir
+            try:
+                ckpt_artifacts = client.list_artifacts(
+                    run_id, path="checkpoints"
+                )
+                for art in ckpt_artifacts:
+                    candidate_paths.append(art.path)
+            except Exception:
+                pass
+
+            # Prefer best_model.pt, then final_model.pt
+            norm_paths = [p.replace("\\", "/") for p in candidate_paths]
+            selected_artifact_path = None
+            for name in ["best_model.pt", "final_model.pt"]:
+                for p in norm_paths:
+                    if p.endswith(name):
+                        selected_artifact_path = p
+                        break
+                if selected_artifact_path is not None:
+                    break
+
+            # If still none, pick checkpoint with largest epoch number
+            if selected_artifact_path is None:
+                max_epoch = -1
+                best_ckpt = None
+                pattern = re.compile(r"checkpoint_epoch(\d+)\.pt$")
+                for p in norm_paths:
+                    m = pattern.search(p)
+                    if m:
+                        epoch_num = int(m.group(1))
+                        if epoch_num > max_epoch:
+                            max_epoch = epoch_num
+                            best_ckpt = p
+                if best_ckpt is not None:
+                    selected_artifact_path = best_ckpt
+
+            if selected_artifact_path is not None:
+                temp_dir = tempfile.mkdtemp()
+                local_path = client.download_artifacts(
+                    run_id, selected_artifact_path, temp_dir
+                )
+                # Return the downloaded path
+                return Path(local_path)
+
+        except Exception as e:
+            print(f"  Could not load from MLflow artifacts: {e}")
+            print("  Trying local checkpoint directory...")
+
+        # Fallback to local checkpoint directory
+        checkpoint_dir = Path("outputs/checkpoints")
+
+        # Try best_model.pt first
+        best_model_path = checkpoint_dir / "best_model.pt"
+        if best_model_path.exists():
+            return best_model_path
+
+        # Try final_model.pt
+        final_model_path = checkpoint_dir / "final_model.pt"
+        if final_model_path.exists():
+            return final_model_path
+
+        # Try latest checkpoint_epoch*.pt if present locally
+        import glob
+        pattern = str(checkpoint_dir / "checkpoint_epoch*.pt")
+        ckpts = glob.glob(pattern)
+        if ckpts:
+            # pick the one with the largest epoch
+            def epoch_num(p):
+                m = re.search(
+                    r"checkpoint_epoch(\d+)\.pt$",
+                    p.replace("\\", "/")
+                )
+                return int(m.group(1)) if m else -1
+            latest = max(ckpts, key=epoch_num)
+            return Path(latest)
+
+        msg = (f"No checkpoint found for run_id: {run_id} "
+               f"in MLflow or local directory")
+        raise FileNotFoundError(msg)
+
+    return None
+
+
 def train_full_model(
     config_path: str = "config/train.yaml",
     weight_initial: float = 1.0,
@@ -107,10 +240,60 @@ def train_full_model(
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=config.train.learning_rate)
     
+    # Load pretrained checkpoint if specified
+    start_epoch = 1
+    has_pretrained = (config.train.pretrained_checkpoint is not None or
+                      config.train.pretrained_run_id is not None)
+    if has_pretrained:
+        try:
+            checkpoint_path = resolve_checkpoint_path(
+                run_id=config.train.pretrained_run_id,
+                checkpoint_path=config.train.pretrained_checkpoint
+            )
+
+            if checkpoint_path is not None:
+                print(f"\nLoading pretrained checkpoint: {checkpoint_path}")
+                checkpoint = torch.load(
+                    checkpoint_path, map_location=device
+                )
+
+                # Load model state
+                model.load_state_dict(checkpoint['model_state_dict'])
+                print("  ✓ Model state loaded")
+
+                # Load optimizer state if resuming training
+                has_optimizer = 'optimizer_state_dict' in checkpoint
+                if config.train.resume_training and has_optimizer:
+                    optimizer.load_state_dict(
+                        checkpoint['optimizer_state_dict']
+                    )
+                    print("  ✓ Optimizer state loaded")
+
+                    # Resume from checkpoint epoch
+                    if 'epoch' in checkpoint:
+                        start_epoch = checkpoint['epoch'] + 1
+                        print(f"  ✓ Resuming from epoch {start_epoch}")
+                else:
+                    msg = ("  ℹ Starting fresh training from "
+                           "pretrained weights (epoch 1)")
+                    print(msg)
+
+                if 'loss' in checkpoint:
+                    print(f"  Checkpoint loss: {checkpoint['loss']:.6f}")
+
+        except FileNotFoundError as e:
+            print(f"\n⚠ Warning: {e}")
+            print("  Continuing with random initialization...")
+        except Exception as e:
+            print(f"\n⚠ Error loading checkpoint: {e}")
+            print("  Continuing with random initialization...")
+            import traceback
+            traceback.print_exc()
+    
     # Create learning rate scheduler (if configured)
     scheduler = None
     if config.train.scheduler.type is None:
-        print(f"  Scheduler: None (disabled)")
+        print("  Scheduler: None (disabled)")
     elif config.train.scheduler.type == "reduce_on_plateau":
         print(f"  Setting up ReduceLROnPlateau...")
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -246,7 +429,7 @@ def train_full_model(
         best_metric_name = "eval/relative_l2_error" if eval_dataset is not None else "train/relative_l2_error"
         best_checkpoint_path = Path(config.train.checkpoint_dir) / "best_model.pt"
         
-        for epoch in range(1, config.train.epochs + 1):
+        for epoch in range(start_epoch, config.train.epochs + 1):
             epoch_start = time.time()
             # Training
             model.train()

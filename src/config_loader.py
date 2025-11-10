@@ -105,6 +105,9 @@ class TrainConfig:
         checkpoint_dir: Directory to save model checkpoints
         eval_subset_size: Number of points to use for L² eval (0 = use all)
         checkpoint_ratio: Ratio of epochs for periodic checkpoints (0 = disable)
+        pretrained_run_id: MLflow run ID to load pretrained model from (None = train from scratch)
+        pretrained_checkpoint: Direct path to checkpoint file (overrides pretrained_run_id if set)
+        resume_training: If True, resume training from checkpoint epoch; if False, start from epoch 1
     """
     epochs: int = 10000
     learning_rate: float = 1e-3
@@ -122,6 +125,9 @@ class TrainConfig:
     checkpoint_dir: str = "outputs/checkpoints"
     eval_subset_size: int = 2000
     checkpoint_ratio: float = 0.0
+    pretrained_run_id: Optional[str] = None
+    pretrained_checkpoint: Optional[str] = None
+    resume_training: bool = True
 
 
 @dataclass

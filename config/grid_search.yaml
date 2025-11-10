@@ -6,7 +6,7 @@ grid_search:
   base_config: config/train.yaml
   
   # Number of epochs for each run
-  epochs: 15000
+  epochs: 5000
   
   # Grid parameters to search
   parameters:
