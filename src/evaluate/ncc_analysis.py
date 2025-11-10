@@ -314,7 +314,7 @@ def main():
     parser.add_argument("--run_id", type=str, required=True, help="MLflow run ID to analyze")
     parser.add_argument("--dataset", type=str, default="data/processed/dataset.npz",
                         help="Path to dataset .npz file")
-    parser.add_argument("--bins", type=int, default=2, help="Number of bins for amplitude classes")
+    parser.add_argument("--bins", type=int, default=4, help="Number of bins for amplitude classes")
     parser.add_argument("--u_range", type=float, nargs=2, default=None,
                         help="u range for binning")
     parser.add_argument("--v_range", type=float, nargs=2, default=None,
